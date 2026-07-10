@@ -1,0 +1,1 @@
+"John Doe john@gmail.com 9876543210 React Node.js Python Django" 

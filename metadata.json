@@ -1,0 +1,6 @@
+{
+  "name": "Tejoma Recruiting",
+  "description": "An AI-powered recruitment platform featuring swipe-based candidate-job matching, custom-built Random Forest machine learning scoring, and real-time analytics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

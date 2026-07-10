@@ -1,0 +1,21 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+backups/
+.venv/
+uploads/*
+!uploads/.gitkeep
+
+# Candidate PII / sample data - kept on disk, not version controlled
+resumes/
+resumedata.csv
+db_store.json
+
+# Local tool/editor state - not shared project config
+.claude/
+.vscode/
