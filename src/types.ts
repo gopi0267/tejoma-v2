@@ -80,6 +80,32 @@ export interface Job {
   status: 'open' | 'closed' | 'on_hold';
   created_at: string;
   updated_at: string;
+  // JD-parser fields (see migration-job-description-fields.sql) - all optional/nullable since
+  // they're only populated when a job is created from a parsed job description.
+  optional_skills?: string[];
+  min_experience?: number | null;
+  max_experience?: number | null;
+  experience_unit?: 'years' | 'months' | null;
+  remote_type?: 'remote' | 'hybrid' | 'onsite' | null;
+  employment_type?: 'full-time' | 'part-time' | 'contract' | 'internship' | 'freelance' | 'temporary' | null;
+  industry?: string | null;
+  department?: string | null;
+  education?: string[];
+  certifications?: string[];
+  salary_currency?: 'INR' | 'USD' | 'EUR' | 'GBP' | null;
+  notice_period?: string | null;
+  number_of_openings?: number | null;
+  required_languages?: string[];
+  responsibilities?: string[];
+  tech_stack?: Record<string, string[]>;
+  keywords?: string[];
+  job_summary?: string | null;
+  source_raw_text?: string | null;
+  parse_confidence?: Record<string, string>;
+  // BERT embedding of `description`, precomputed once at creation time (see
+  // migration-matching-embeddings.sql and src/algorithms/bert-embeddings.ts). Null until the
+  // matching-ml-service has embedded it (or if that service was unreachable at creation time).
+  description_embedding?: number[] | null;
 }
 
 export interface Swipe {
@@ -128,6 +154,22 @@ export interface MatchBreakdown {
   experience: { score: number; candidate: number; required: number };
   location: { score: number; candidate: string; required: string; distance: number };
   salary: { score: number; expectation: number; min: number; max: number };
+  // Additional similarity signals (all 0-100) - optional so any existing frontend code reading
+  // just the 4 fields above keeps working unchanged.
+  similarity?: {
+    jaccardSkills: number;
+    cosineText: number;
+    cosineBert: number | null; // null if either side has no stored BERT embedding yet
+    euclideanFeatures: number;
+    levenshteinTitle: number;
+  };
+  ensemble?: {
+    randomForest: number;
+    xgboost: number;
+    lightgbm: number;
+    blendWeight: number; // 0-1, how much the final score trusted ML vs the heuristic
+    trainedSampleCount: number;
+  } | null; // null if the ML service was unavailable/untrained for this scoring call
 }
 
 export interface QueueCandidate extends Candidate {

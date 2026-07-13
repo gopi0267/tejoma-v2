@@ -21,6 +21,7 @@ import ResumeUploadPage from './components/ResumeUploadPage.js';
 import { useAuth } from './context/AuthContext.js';
 import ProtectedRoute from './components/ProtectedRoute.js';
 import { apiFetch } from './utils/apiFetch.js';
+import ChatbotWidget from './components/ChatbotWidget.js';
 
 export default function App() {
   // Authentication state now lives in AuthContext (see src/context/AuthContext.tsx) - it
@@ -45,6 +46,15 @@ export default function App() {
   const [newJobLocation, setNewJobLocation] = useState('Austin, TX');
   const [newJobSalMin, setNewJobSalMin] = useState(60000);
   const [newJobSalMax, setNewJobSalMax] = useState(130000);
+
+  // Paste-JD auto-fill: parses free-text into the fields above (plus the extra JD-parser fields
+  // below, which aren't shown as individual inputs in this compact modal but are still sent to
+  // the backend on submit so they're not silently dropped).
+  const [showJdPaste, setShowJdPaste] = useState(false);
+  const [jdPasteText, setJdPasteText] = useState('');
+  const [isParsingJD, setIsParsingJD] = useState(false);
+  const [jdParseError, setJdParseError] = useState('');
+  const [parsedJDExtras, setParsedJDExtras] = useState<any>(null);
 
   // Live Toast Notifications from SSE streams
   const [notifications, setNotifications] = useState<{ id: number; message: string; type: string }[]>([]);
@@ -121,11 +131,45 @@ export default function App() {
     }
   };
 
+  const handleParseJobDescription = async () => {
+    if (!jdPasteText.trim()) return;
+    setIsParsingJD(true);
+    setJdParseError('');
+    try {
+      const res = await apiFetch('/api/jobs/parse-description', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: jdPasteText })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || 'Failed to parse job description');
+
+      const p = data.parsed;
+      // Pre-fill the existing simple fields - still fully editable before the recruiter submits.
+      if (p.jobTitle) setNewJobTitle(p.jobTitle);
+      setNewJobDesc(jdPasteText);
+      if (p.requiredSkills?.length) setNewJobSkills(p.requiredSkills.map((s: any) => s.canonical).join(', '));
+      if (p.minimumExperience != null) setNewJobExp(Math.round(p.minimumExperience));
+      if (p.location?.length) setNewJobLocation(p.location.join(', '));
+      if (p.salaryMinimum != null) setNewJobSalMin(Math.round(p.salaryMinimum));
+      if (p.salaryMaximum != null) setNewJobSalMax(Math.round(p.salaryMaximum));
+
+      // Extra fields this compact modal doesn't have dedicated inputs for - kept for display
+      // and included in the final submit so they aren't silently dropped.
+      setParsedJDExtras(p);
+    } catch (err: any) {
+      setJdParseError(err.message);
+    } finally {
+      setIsParsingJD(false);
+    }
+  };
+
   const handleCreateJobSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newJobTitle || !newJobDesc) return;
 
     try {
+      const extras = parsedJDExtras || {};
       const res = await apiFetch('/api/jobs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -137,7 +181,25 @@ export default function App() {
           location: newJobLocation,
           salary_min: newJobSalMin,
           salary_max: newJobSalMax,
-          company_id: companyId
+          company_id: companyId,
+          optional_skills: extras.optionalSkills?.map((s: any) => s.canonical) || [],
+          min_experience: extras.minimumExperience ?? null,
+          max_experience: extras.maximumExperience ?? null,
+          experience_unit: extras.experienceUnit ?? null,
+          remote_type: extras.remoteType ?? null,
+          employment_type: extras.employmentType ?? null,
+          industry: extras.industry ?? null,
+          department: extras.department ?? null,
+          education: extras.education || [],
+          certifications: extras.certifications || [],
+          salary_currency: extras.salaryCurrency ?? null,
+          notice_period: extras.noticePeriod ?? null,
+          number_of_openings: extras.numberOfOpenings ?? null,
+          required_languages: extras.requiredLanguages || [],
+          responsibilities: extras.responsibilities || [],
+          keywords: extras.keywords || [],
+          job_summary: extras.jobSummary ?? null,
+          source_raw_text: jdPasteText || null,
         })
       });
 
@@ -150,6 +212,9 @@ export default function App() {
         setNewJobLocation('Austin, TX');
         setNewJobSalMin(60000);
         setNewJobSalMax(130000);
+        setJdPasteText('');
+        setParsedJDExtras(null);
+        setShowJdPaste(false);
         
         // Refresh
         fetchCoreTelemetry();
@@ -276,6 +341,56 @@ export default function App() {
             </div>
 
             <form onSubmit={handleCreateJobSubmit} className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
+
+              {/* Paste-JD auto-fill (production JD parser: regex + dictionary + spaCy/GLiNER) */}
+              <div className="border border-emerald-200 bg-emerald-50/50 rounded-xl p-3">
+                <button
+                  type="button"
+                  onClick={() => setShowJdPaste(v => !v)}
+                  className="flex items-center gap-1.5 text-emerald-700 font-bold text-[10px] uppercase tracking-wider cursor-pointer"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  {showJdPaste ? 'Hide' : 'Paste a Job Description to Auto-Fill'}
+                </button>
+
+                {showJdPaste && (
+                  <div className="mt-3 space-y-2">
+                    <textarea
+                      value={jdPasteText}
+                      onChange={(e) => setJdPasteText(e.target.value)}
+                      rows={6}
+                      placeholder="Paste the full job description text here..."
+                      className="w-full bg-white border border-slate-200 rounded-lg py-2 px-3 text-slate-800 focus:outline-none focus:border-emerald-500"
+                    />
+                    {jdParseError && <p className="text-red-600 text-[10px] font-semibold">{jdParseError}</p>}
+                    <button
+                      type="button"
+                      onClick={handleParseJobDescription}
+                      disabled={isParsingJD || !jdPasteText.trim()}
+                      className="bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-300 text-white font-bold px-3 py-1.5 rounded-lg text-[10px] cursor-pointer"
+                    >
+                      {isParsingJD ? 'Extracting...' : 'Extract & Fill Fields'}
+                    </button>
+
+                    {parsedJDExtras && (
+                      <div className="mt-2 bg-white border border-slate-200 rounded-lg p-2.5 space-y-1">
+                        <p className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">Also detected (included on submit)</p>
+                        <div className="flex flex-wrap gap-1.5 text-[10px]">
+                          {parsedJDExtras.remoteType && <span className="bg-slate-100 px-2 py-0.5 rounded-full">{parsedJDExtras.remoteType}</span>}
+                          {parsedJDExtras.employmentType && <span className="bg-slate-100 px-2 py-0.5 rounded-full">{parsedJDExtras.employmentType}</span>}
+                          {parsedJDExtras.industry && <span className="bg-slate-100 px-2 py-0.5 rounded-full">Industry: {parsedJDExtras.industry}</span>}
+                          {parsedJDExtras.department && <span className="bg-slate-100 px-2 py-0.5 rounded-full">Dept: {parsedJDExtras.department}</span>}
+                          {parsedJDExtras.noticePeriod && <span className="bg-slate-100 px-2 py-0.5 rounded-full">Notice: {parsedJDExtras.noticePeriod}</span>}
+                          {parsedJDExtras.numberOfOpenings != null && <span className="bg-slate-100 px-2 py-0.5 rounded-full">{parsedJDExtras.numberOfOpenings} opening(s)</span>}
+                          {parsedJDExtras.education?.map((ed: string) => <span key={ed} className="bg-slate-100 px-2 py-0.5 rounded-full">{ed}</span>)}
+                          {parsedJDExtras.certifications?.map((c: string) => <span key={c} className="bg-slate-100 px-2 py-0.5 rounded-full">{c}</span>)}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
               <div>
                 <label className="block text-slate-500 font-bold mb-1.5 uppercase tracking-wider text-[9px]">Position Title</label>
                 <input
@@ -379,6 +494,7 @@ export default function App() {
       )}
 
     </div>
+    <ChatbotWidget />
     </ProtectedRoute>
   );
 }

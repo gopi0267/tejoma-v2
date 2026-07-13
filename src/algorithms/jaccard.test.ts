@@ -24,12 +24,15 @@ describe('Jaccard Similarity', () => {
     expect(result).toBe(0);
   });
 
-  test('Partial overlap - 66% match', () => {
+  test('Partial overlap - intersection 2 / union 4 = 50%', () => {
+    // {Python, React} intersect / {Python, React, TypeScript, Node.js} union = 2/4 = 50%,
+    // not 66% - 66% would be intersection-over-skills1-size, which is a different (and less
+    // standard) metric than Jaccard's intersection-over-union.
     const result = jaccardSimilarity(
       ['Python', 'React', 'TypeScript'],
       ['Python', 'React', 'Node.js']
     );
-    expect(result).toBe(66);
+    expect(result).toBe(50);
   });
 
   test('Case insensitive matching', () => {

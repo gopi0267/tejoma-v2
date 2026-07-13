@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { db } from '../db.js';
-import { calculateMatchScore } from '../services.js';
+import { calculateMatchScore, calculateMatchScoresBatch, trainModelOnStartup } from '../services.js';
+import { logger } from '../utils/logger.js';
 import { broadcastEvent } from '../realtime.js';
 import { requireAuth, requireRole } from '../middleware/auth.middleware.js';
 
@@ -30,30 +31,25 @@ router.get('/matches/queue/:job_id', async (req, res) => {
         return res.json({ candidate: null, remaining: 0 });
       }
   
-      // Calculate scores for all unreviewed candidates
-      const scoredCandidates = [];
-      for (const candidate of unswipedCandidates) {
-        const scoreData = await calculateMatchScore(job, candidate, { skipGeminiSummary: true });
-        scoredCandidates.push({
-          candidate,
-          match_score: scoreData.final_score,
-          breakdown: scoreData.breakdown,
-          summary: scoreData.summary
-        });
-      }
-  
+      // Batched: one round-trip to the ML ensemble for every unreviewed candidate, not one per
+      // candidate.
+      const scores = await calculateMatchScoresBatch(job, unswipedCandidates, { skipGeminiSummary: true });
+      const scoredCandidates = unswipedCandidates.map((candidate, i) => ({
+        candidate,
+        match_score: scores[i].final_score,
+        breakdown: scores[i].breakdown,
+        summary: scores[i].summary,
+      }));
+
       // Sort by score descending
       scoredCandidates.sort((a, b) => b.match_score - a.match_score);
-  
-      // Get top candidate (skip the live Gemini call - it's not rendered in the UI and was blocking this request)
+
       const topCandidate = scoredCandidates[0];
-      const topScoreData = await calculateMatchScore(job, topCandidate.candidate, { skipGeminiSummary: true });
-  
       res.json({
         candidate: topCandidate.candidate,
-        match_score: topScoreData.final_score,
-        breakdown: topScoreData.breakdown,
-        summary: topScoreData.summary,
+        match_score: topCandidate.match_score,
+        breakdown: topCandidate.breakdown,
+        summary: topCandidate.summary,
         remaining: scoredCandidates.length
       });
   
@@ -129,7 +125,7 @@ router.post('/swipes', async (req, res) => {
       });
       
       console.log('✅ SWIPE SAVED:', savedSwipe);
-  
+
       broadcastEvent('swipe-completed', {
         recruiter_id: parseInt(recruiter_id),
         job_id: parseInt(job_id),
@@ -137,38 +133,39 @@ router.post('/swipes', async (req, res) => {
         candidateName: candidate.name,
         action: Number(action) === 1 ? 'accept' : 'reject'
       });
-  
+
+      // Retrain the matching ensemble in the background - every swipe is a fresh labeled
+      // example, and training on the small dataset this app currently has is cheap. Never
+      // blocks the swipe response; a slow/failed retrain must not break the swipe UX.
+      trainModelOnStartup().catch((err) => logger.warn({ err: err.message }, 'Background retrain after swipe failed'));
+
       // GET NEXT CANDIDATE
       const swipes = await db.getSwipes();
       console.log('📊 TOTAL SWIPES IN DB:', swipes.length);
-      
+
       const swipedCandidateIds = new Set(swipes.filter(s => s.job_id === job.id).map(s => s.candidate_id));
       const allCandidates = await db.getCandidates();
       const unswipedCandidates = allCandidates.filter(c => !swipedCandidateIds.has(c.id));
-  
+
       console.log('👥 UNREVIEWED:', unswipedCandidates.length, 'of', allCandidates.length);
-  
+
       let next_candidate = null;
       if (unswipedCandidates.length > 0) {
-        const scoredPromises = unswipedCandidates.map(async (c) => {
-          const sd = await calculateMatchScore(job, c, { skipGeminiSummary: true });
-          return { candidate: c, score: sd.final_score, breakdown: sd.breakdown, summary: sd.summary };
-        });
-        const scored = await Promise.all(scoredPromises);
+        // Batched: one round-trip to the ML ensemble for every unreviewed candidate.
+        const scores = await calculateMatchScoresBatch(job, unswipedCandidates, { skipGeminiSummary: true });
+        const scored = unswipedCandidates.map((c, i) => ({ candidate: c, score: scores[i].final_score, breakdown: scores[i].breakdown, summary: scores[i].summary }));
         scored.sort((a, b) => b.score - a.score);
-        
-        const topNextCandidate = scored[0].candidate;
-        const topNextScoreData = await calculateMatchScore(job, topNextCandidate, { skipGeminiSummary: true });
-        
+
+        const top = scored[0];
         next_candidate = {
-          candidate: topNextCandidate,
-          match_score: topNextScoreData.final_score,
-          breakdown: topNextScoreData.breakdown,
-          summary: topNextScoreData.summary,
+          candidate: top.candidate,
+          match_score: top.score,
+          breakdown: top.breakdown,
+          summary: top.summary,
           remaining: scored.length
         };
       }
-  
+
       res.status(201).json({
         success: true,
         match_score: scoreData.final_score,

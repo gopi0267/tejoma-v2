@@ -10,19 +10,12 @@ import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import pinoHttp from 'pino-http';
 import { createServer as createViteServer } from 'vite';
-import { jaccardSimilarity } from './src/algorithms/similarities.js';
 import { registerApiRoutes } from './src/api/index.js';
 import { clients } from './src/realtime.js';
 import { logger } from './src/utils/logger.js';
 import { globalLimiter, authLimiter } from './src/middleware/rateLimit.middleware.js';
 import { errorHandler } from './src/middleware/error.middleware.js';
 
-// Test Jaccard
-const testScore = jaccardSimilarity(
-  ['Python', 'React', 'TypeScript'],
-  ['Python', 'React', 'Node.js']
-);
-console.log('🧪 Jaccard Test Score:', testScore); // Should print 66
 const app = express();
 const PORT = 3006;
 

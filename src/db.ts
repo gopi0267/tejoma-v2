@@ -348,6 +348,16 @@ export async function createCandidate(candidate: Omit<Candidate, 'id' | 'created
   }
 }
 
+export async function deleteCandidate(id: number): Promise<boolean> {
+  try {
+    const result = await pool.query('DELETE FROM candidates WHERE id = $1', [id]);
+    return (result.rowCount ?? 0) > 0;
+  } catch (error) {
+    console.error('Error deleting candidate:', error);
+    return false;
+  }
+}
+
 export async function updateCandidate(id: number, updates: Partial<Candidate>): Promise<Candidate | null> {
   try {
     const fields: string[] = [];
@@ -417,9 +427,13 @@ export async function getJobsByCompanyId(companyId: number): Promise<Job[]> {
 export async function createJob(job: Omit<Job, 'id' | 'created_at' | 'updated_at'>): Promise<Job | null> {
   try {
     const result = await pool.query(
-      `INSERT INTO jobs 
-       (company_id, title, description, required_skills, experience_years, location, salary_min, salary_max, status) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) 
+      `INSERT INTO jobs
+       (company_id, title, description, required_skills, experience_years, location, salary_min, salary_max, status,
+        optional_skills, min_experience, max_experience, experience_unit, remote_type, employment_type, industry,
+        department, education, certifications, salary_currency, notice_period, number_of_openings, required_languages,
+        responsibilities, tech_stack, keywords, job_summary, source_raw_text, parse_confidence,
+        description_embedding)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30)
        RETURNING *`,
       [
         job.company_id,
@@ -431,12 +445,41 @@ export async function createJob(job: Omit<Job, 'id' | 'created_at' | 'updated_at
         job.salary_min,
         job.salary_max,
         job.status,
+        job.optional_skills ?? [],
+        job.min_experience ?? null,
+        job.max_experience ?? null,
+        job.experience_unit ?? null,
+        job.remote_type ?? null,
+        job.employment_type ?? null,
+        job.industry ?? null,
+        job.department ?? null,
+        job.education ?? [],
+        job.certifications ?? [],
+        job.salary_currency ?? null,
+        job.notice_period ?? null,
+        job.number_of_openings ?? null,
+        job.required_languages ?? [],
+        job.responsibilities ?? [],
+        JSON.stringify(job.tech_stack ?? {}),
+        job.keywords ?? [],
+        job.job_summary ?? null,
+        job.source_raw_text ?? null,
+        JSON.stringify(job.parse_confidence ?? {}),
+        job.description_embedding ?? null,
       ]
     );
     return result.rows[0];
   } catch (error) {
     console.error('Error creating job:', error);
     return null;
+  }
+}
+
+export async function updateJobEmbedding(id: number, embedding: number[]): Promise<void> {
+  try {
+    await pool.query('UPDATE jobs SET description_embedding = $1 WHERE id = $2', [embedding, id]);
+  } catch (error) {
+    console.error('Error updating job embedding:', error);
   }
 }
 
@@ -451,6 +494,59 @@ export async function updateJobStatus(id: number, status: 'open' | 'closed' | 'o
     console.error('Error updating job status:', error);
     return null;
   }
+}
+
+// ==================== RAG KNOWLEDGE BASE (chatbot) ====================
+export interface KnowledgeChunk {
+  id: number;
+  company_id: number | null;
+  source_type: 'candidate' | 'job' | 'company';
+  source_id: number;
+  content: string;
+  embedding: number[];
+}
+
+// Upsert-by-(source_type, source_id) so re-indexing an entity (e.g. a candidate edited after
+// import) replaces its chunk instead of accumulating duplicates.
+export async function upsertKnowledgeChunk(chunk: {
+  company_id: number | null;
+  source_type: 'candidate' | 'job' | 'company';
+  source_id: number;
+  content: string;
+  embedding: number[];
+}): Promise<void> {
+  await pool.query(
+    `INSERT INTO knowledge_base_chunks (company_id, source_type, source_id, content, embedding)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (source_type, source_id)
+     DO UPDATE SET company_id = $1, content = $4, embedding = $5, updated_at = CURRENT_TIMESTAMP`,
+    [chunk.company_id, chunk.source_type, chunk.source_id, chunk.content, chunk.embedding]
+  );
+}
+
+export async function deleteKnowledgeChunk(sourceType: 'candidate' | 'job' | 'company', sourceId: number): Promise<void> {
+  await pool.query('DELETE FROM knowledge_base_chunks WHERE source_type = $1 AND source_id = $2', [sourceType, sourceId]);
+}
+
+// Candidate chunks (company_id IS NULL) are visible to every authenticated recruiter, mirroring
+// the existing /api/candidates behavior (candidates have no company_id anywhere in this schema).
+// Job and company chunks are strictly scoped to the caller's own company_id.
+export async function getKnowledgeChunksForCompany(companyId: number): Promise<KnowledgeChunk[]> {
+  try {
+    const result = await pool.query(
+      `SELECT * FROM knowledge_base_chunks WHERE company_id IS NULL OR company_id = $1`,
+      [companyId]
+    );
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching knowledge base chunks:', error);
+    return [];
+  }
+}
+
+export async function countKnowledgeChunks(): Promise<number> {
+  const result = await pool.query('SELECT COUNT(*)::int AS count FROM knowledge_base_chunks');
+  return result.rows[0]?.count ?? 0;
 }
 
 // SWIPES - CRITICAL FUNCTIONS
@@ -768,12 +864,18 @@ export const db = {
   getCandidatesByIds,
   createCandidate,
   updateCandidate,
+  deleteCandidate,
   getJobs,
   getJobById,
   getJobsByCompanyId,
   createJob,
   deleteJob,
   updateJobStatus,
+  updateJobEmbedding,
+  upsertKnowledgeChunk,
+  deleteKnowledgeChunk,
+  getKnowledgeChunksForCompany,
+  countKnowledgeChunks,
   getSwipes,
   getSwipesByJobId,
   getSwipesByRecruiterId,

@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Mail, Lock, Building2, User as UserIcon, CheckCircle, ArrowRight, ShieldCheck, ArrowLeft } from 'lucide-react';
+import { CheckCircle, ArrowRight, ShieldCheck, ArrowLeft } from 'lucide-react';
 import TejomaLogo from './TejomaLogo.js';
 import { useAuth } from '../context/AuthContext.js';
 
@@ -268,308 +268,283 @@ export default function Login() {
     }
   };
 
-  const isForgotFlow = mode.startsWith('forgot');
-  const isSignupFlow = mode.startsWith('signup');
-
   return (
-    <div id="auth-screen" className="min-h-screen flex items-center justify-center p-4" style={{ backgroundColor: '#F8F9FA' }}>
-      <div className="bg-white border border-[#E0E0E0] rounded-2xl w-full max-w-lg shadow-xl overflow-hidden flex flex-col md:flex-row">
+    <div id="auth-screen" className="min-h-screen flex flex-col items-center justify-center p-4" style={{ backgroundColor: '#F3F2EF' }}>
 
-        {/* Decorative left-panel for company branding */}
-        <div className="p-8 flex flex-col justify-between md:w-5/12 border-b md:border-b-0 md:border-r border-[#E0E0E0]" style={{ background: 'linear-gradient(135deg, #E8F4F8 0%, #F0E8F8 100%)' }}>
-          <div>
-            <span className="text-[10px] bg-white text-[#27AE60] border border-[#A8E6C1] font-bold px-2.5 py-1 rounded-full uppercase tracking-widest">Enterprise AI</span>
-            <div className="mt-6 flex flex-col gap-2">
-              <TejomaLogo size="lg" textColorClass="text-[#1A1A1A]" />
-              <p className="text-xs text-[#666666] font-medium tracking-tight mt-1">Recruiting Solutions</p>
-            </div>
+      {/* Logo + tagline, centered above the card */}
+      <div className="mb-6 flex flex-col items-center">
+        <TejomaLogo size="lg" textColorClass="text-[#1A1A1A]" />
+        <p className="text-[#666666] text-sm mt-2">Make the most of your recruiting workflow</p>
+      </div>
+
+      <div className="bg-white rounded-2xl w-full max-w-md shadow-md p-8 sm:p-10">
+
+        {/* ============ LOG IN / SIGN UP TAB SWITCHER ============ */}
+        {/* Only shown on the two entry-point screens - hidden during OTP/password sub-steps
+            and the forgot-password flow, where jumping tabs mid-verification would lose progress. */}
+        {(mode === 'login' || mode === 'signup-details') && (
+          <div className="flex mb-8 bg-[#F3F2EF] rounded-full p-1">
+            <button
+              type="button"
+              onClick={() => { setMode('login'); setError(''); setInfo(''); }}
+              className={`flex-1 py-2 text-sm font-bold text-center rounded-full transition-colors cursor-pointer ${
+                mode === 'login' ? 'bg-white text-[#1A1A1A] shadow-sm' : 'text-[#666666] hover:text-[#1A1A1A]'
+              }`}
+            >
+              Log In
+            </button>
+            <button
+              type="button"
+              onClick={() => { setMode('signup-details'); setError(''); setInfo(''); }}
+              className={`flex-1 py-2 text-sm font-bold text-center rounded-full transition-colors cursor-pointer ${
+                mode === 'signup-details' ? 'bg-white text-[#1A1A1A] shadow-sm' : 'text-[#666666] hover:text-[#1A1A1A]'
+              }`}
+            >
+              Sign Up
+            </button>
           </div>
-        </div>
+        )}
 
-        {/* Form area */}
-        <div className="p-8 md:w-7/12 flex-1 flex flex-col justify-center">
+        {/* ============ LOGIN ============ */}
+        {mode === 'login' && (
+          <form onSubmit={handleLogin} className="space-y-5">
+            <TextField
+              label="Email or phone number"
+              value={loginIdentifier}
+              onChange={(e) => setLoginIdentifier(e.target.value)}
+              placeholder="recruiter@tejoma.com or +91 98765 43210"
+            />
 
-          {/* ============ SIGN IN / SIGN UP TAB SWITCHER ============ */}
-          {/* Only shown on the two entry-point screens - hidden during OTP/password sub-steps
-              and the forgot-password flow, where jumping tabs mid-verification would lose progress. */}
-          {(mode === 'login' || mode === 'signup-details') && (
-            <div className="flex mb-6 border-b border-[#E0E0E0]">
-              <button
-                type="button"
-                onClick={() => { setMode('login'); setError(''); setInfo(''); }}
-                className={`flex-1 pb-3 text-sm font-bold text-center transition-colors cursor-pointer ${
-                  mode === 'login' ? 'text-[#27AE60] border-b-2 border-[#27AE60]' : 'text-[#999999] hover:text-[#666666]'
-                }`}
-              >
-                Log In
-              </button>
-              <button
-                type="button"
-                onClick={() => { setMode('signup-details'); setError(''); setInfo(''); }}
-                className={`flex-1 pb-3 text-sm font-bold text-center transition-colors cursor-pointer ${
-                  mode === 'signup-details' ? 'text-[#27AE60] border-b-2 border-[#27AE60]' : 'text-[#999999] hover:text-[#666666]'
-                }`}
-              >
-                Sign Up
+            <PasswordField
+              label="Password"
+              value={loginPassword}
+              onChange={(e) => setLoginPassword(e.target.value)}
+              placeholder="Enter your password"
+            />
+
+            <div className="flex items-center justify-between">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={rememberMe} onChange={(e) => setRememberMe(e.target.checked)} className="rounded border-[#CCCCCC] text-[#27AE60] focus:ring-[#27AE60]" />
+                <span className="text-xs text-[#666666]">Remember me for 30 days</span>
+              </label>
+              <button type="button" onClick={() => { setMode('forgot-identifier'); setError(''); }} className="text-xs font-semibold text-[#27AE60] hover:underline cursor-pointer">
+                Forgot password?
               </button>
             </div>
-          )}
 
-          {/* ============ LOGIN ============ */}
-          {mode === 'login' && (
-            <>
-              <div className="mb-6">
-                <h2 className="text-xl font-bold text-[#1A1A1A] tracking-tight">Log In</h2>
-                <p className="text-[#666666] text-xs mt-1">Access matched queues and machine learning metrics.</p>
-              </div>
+            {error && <ErrorBanner text={error} />}
 
-              {error && <div className="bg-[#FFE5E5] border border-[#FFB3B3] p-3 rounded-lg text-[#E74C3C] text-xs font-medium mb-4">{error}</div>}
+            <button type="submit" disabled={loading} className="w-full bg-[#27AE60] hover:bg-[#219653] active:bg-[#1E8449] text-white text-sm font-bold py-3 rounded-full transition-colors cursor-pointer shadow-sm disabled:opacity-60">
+              {loading ? 'Logging In...' : 'Log In'}
+            </button>
+          </form>
+        )}
 
-              <form onSubmit={handleLogin} className="space-y-4">
-                <div>
-                  <label className="block text-[#666666] text-[10px] font-bold mb-1 uppercase tracking-wider">Email or Phone</label>
-                  <div className="relative">
-                    <Mail className="absolute left-3 top-2.5 w-4 h-4 text-[#999999]" />
-                    <input
-                      type="text"
-                      required
-                      value={loginIdentifier}
-                      onChange={(e) => setLoginIdentifier(e.target.value)}
-                      placeholder="recruiter@tejoma.com or +91 98765 43210"
-                      className="w-full bg-[#F5F5F5] border border-[#E0E0E0] rounded-xl py-2 pl-9 pr-4 text-[#1A1A1A] text-xs focus:outline-none focus:border-[#27AE60] transition-colors"
-                    />
-                  </div>
-                </div>
+        {/* ============ SIGN UP: STEP 1 - details ============ */}
+        {mode === 'signup-details' && (
+          <form onSubmit={handleSignupStart} className="space-y-5">
+            <TextField label="Full name" value={signupName} onChange={(e) => setSignupName(e.target.value)} placeholder="Sarah Mitchell" />
 
-                <div>
-                  <div className="flex justify-between items-center mb-1">
-                    <label className="block text-[#666666] text-[10px] font-bold uppercase tracking-wider">Password</label>
-                    <button type="button" onClick={() => { setMode('forgot-identifier'); setError(''); }} className="text-[#27AE60] hover:text-[#219653] text-[10px] focus:outline-none cursor-pointer">
-                      Forgot?
-                    </button>
-                  </div>
-                  <div className="relative">
-                    <Lock className="absolute left-3 top-2.5 w-4 h-4 text-[#999999]" />
-                    <input
-                      type="password"
-                      required
-                      value={loginPassword}
-                      onChange={(e) => setLoginPassword(e.target.value)}
-                      placeholder="••••••••"
-                      className="w-full bg-[#F5F5F5] border border-[#E0E0E0] rounded-xl py-2 pl-9 pr-4 text-[#1A1A1A] text-xs focus:outline-none focus:border-[#27AE60] transition-colors"
-                    />
-                  </div>
-                </div>
-
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={rememberMe} onChange={(e) => setRememberMe(e.target.checked)} className="rounded border-[#CCCCCC] text-[#27AE60] focus:ring-[#27AE60]" />
-                  <span className="text-[10px] text-[#666666]">Remember session for 30 days</span>
-                </label>
-
-                <button type="submit" disabled={loading} className="w-full bg-[#27AE60] hover:bg-[#219653] active:bg-[#1E8449] text-white text-xs font-semibold py-2 rounded-xl transition-colors mt-2 cursor-pointer shadow-sm disabled:opacity-60">
-                  {loading ? 'Authenticating...' : 'Log In To Account'}
-                </button>
-              </form>
-            </>
-          )}
-
-          {/* ============ SIGN UP: STEP 1 - details ============ */}
-          {mode === 'signup-details' && (
-            <>
-              <div className="mb-6">
-                <h2 className="text-xl font-bold text-[#1A1A1A] tracking-tight">Create Corporate Workspace</h2>
-                <p className="text-[#666666] text-xs mt-1">We'll send a verification code to confirm it's you.</p>
-              </div>
-
-              {error && <div className="bg-[#FFE5E5] border border-[#FFB3B3] p-3 rounded-lg text-[#E74C3C] text-xs font-medium mb-4">{error}</div>}
-
-              <form onSubmit={handleSignupStart} className="space-y-4">
-                <div>
-                  <label className="block text-[#666666] text-[10px] font-bold mb-1 uppercase tracking-wider">Full Name</label>
-                  <div className="relative">
-                    <UserIcon className="absolute left-3 top-2.5 w-4 h-4 text-[#999999]" />
-                    <input type="text" required value={signupName} onChange={(e) => setSignupName(e.target.value)} placeholder="Sarah Mitchell"
-                      className="w-full bg-[#F5F5F5] border border-[#E0E0E0] rounded-xl py-2 pl-9 pr-4 text-[#1A1A1A] text-xs focus:outline-none focus:border-[#27AE60] transition-colors" />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-[#666666] text-[10px] font-bold mb-1 uppercase tracking-wider">Email or Phone Number</label>
-                  <div className="relative">
-                    <Mail className="absolute left-3 top-2.5 w-4 h-4 text-[#999999]" />
-                    <input type="text" required value={signupIdentifier} onChange={(e) => setSignupIdentifier(e.target.value)} placeholder="sarah@company.com or +91 98765 43210"
-                      className="w-full bg-[#F5F5F5] border border-[#E0E0E0] rounded-xl py-2 pl-9 pr-4 text-[#1A1A1A] text-xs focus:outline-none focus:border-[#27AE60] transition-colors" />
-                  </div>
-                  <p className="text-[9px] text-[#999999] mt-1">We'll send a 6-digit verification code here.</p>
-                </div>
-
-                <div>
-                  <label className="block text-[#666666] text-[10px] font-bold mb-1 uppercase tracking-wider">Company Name</label>
-                  <div className="relative">
-                    <Building2 className="absolute left-3 top-2.5 w-4 h-4 text-[#999999]" />
-                    <input type="text" required value={signupCompany} onChange={(e) => setSignupCompany(e.target.value)} placeholder="Tejoma Tech Inc"
-                      className="w-full bg-[#F5F5F5] border border-[#E0E0E0] rounded-xl py-2 pl-9 pr-4 text-[#1A1A1A] text-xs focus:outline-none focus:border-[#27AE60] transition-colors" />
-                  </div>
-                </div>
-
-                <button type="submit" disabled={loading} className="w-full bg-[#27AE60] hover:bg-[#219653] active:bg-[#1E8449] text-white text-xs font-semibold py-2 rounded-xl transition-colors mt-2 cursor-pointer shadow-sm disabled:opacity-60">
-                  {loading ? 'Sending Code...' : 'Send Verification Code'}
-                </button>
-              </form>
-            </>
-          )}
-
-          {/* ============ SIGN UP: STEP 2 - OTP ============ */}
-          {mode === 'signup-otp' && (
-            <OtpStep
-              title="Verify Your Account"
-              description={`Enter the 6-digit code sent via ${signupChannel} to`}
-              identifier={signupIdentifier}
-              otp={signupOtp}
-              setOtp={setSignupOtp}
-              onSubmit={handleSignupVerify}
-              onBack={() => { setMode('signup-details'); setError(''); setInfo(''); }}
-              onResend={handleResendSignupOtp}
-              loading={loading}
-              error={error}
-              info={info}
+            <TextField
+              label="Email or phone number"
+              value={signupIdentifier}
+              onChange={(e) => setSignupIdentifier(e.target.value)}
+              placeholder="sarah@company.com or +91 98765 43210"
+              hint="We'll send a 6-digit verification code here."
             />
-          )}
 
-          {/* ============ SIGN UP: STEP 3 - password ============ */}
-          {mode === 'signup-password' && (
-            <>
-              <div className="mb-6">
-                <h2 className="text-xl font-bold text-[#1A1A1A] tracking-tight">Create Your Password</h2>
-                <p className="text-[#666666] text-xs mt-1">Verified! Now set a password for your account.</p>
+            <TextField label="Company name" value={signupCompany} onChange={(e) => setSignupCompany(e.target.value)} placeholder="Tejoma Tech Inc" />
+
+            {error && <ErrorBanner text={error} />}
+
+            <p className="text-xs text-[#666666] text-center">
+              By clicking Send Code, you agree to Tejoma's Terms of Service and Privacy Policy.
+            </p>
+
+            <button type="submit" disabled={loading} className="w-full bg-[#27AE60] hover:bg-[#219653] active:bg-[#1E8449] text-white text-sm font-bold py-3 rounded-full transition-colors cursor-pointer shadow-sm disabled:opacity-60">
+              {loading ? 'Sending Code...' : 'Send Verification Code'}
+            </button>
+          </form>
+        )}
+
+        {/* ============ SIGN UP: STEP 2 - OTP ============ */}
+        {mode === 'signup-otp' && (
+          <OtpStep
+            title="Verify Your Account"
+            description={`Enter the 6-digit code sent via ${signupChannel} to`}
+            identifier={signupIdentifier}
+            otp={signupOtp}
+            setOtp={setSignupOtp}
+            onSubmit={handleSignupVerify}
+            onBack={() => { setMode('signup-details'); setError(''); setInfo(''); }}
+            onResend={handleResendSignupOtp}
+            loading={loading}
+            error={error}
+            info={info}
+          />
+        )}
+
+        {/* ============ SIGN UP: STEP 3 - password ============ */}
+        {mode === 'signup-password' && (
+          <form onSubmit={handleSignupComplete} className="space-y-5">
+            <div className="mb-1 text-center">
+              <h2 className="text-lg font-bold text-[#1A1A1A]">Create your password</h2>
+              <p className="text-[#666666] text-xs mt-1">Verified! Now set a password for your account.</p>
+            </div>
+
+            <div>
+              <PasswordField label="New password (8 or more characters)" value={signupPassword} onChange={(e) => setSignupPassword(e.target.value)} placeholder="Enter a password" />
+              <PasswordStrengthMeter password={signupPassword} />
+            </div>
+            <PasswordField label="Confirm password" value={signupConfirmPassword} onChange={(e) => setSignupConfirmPassword(e.target.value)} placeholder="Re-enter password" />
+
+            {error && <ErrorBanner text={error} />}
+
+            <button type="submit" disabled={loading} className="w-full bg-[#27AE60] hover:bg-[#219653] active:bg-[#1E8449] text-white text-sm font-bold py-3 rounded-full transition-colors cursor-pointer shadow-sm disabled:opacity-60">
+              {loading ? 'Creating Account...' : 'Create Account & Log In'}
+            </button>
+          </form>
+        )}
+
+        {/* ============ FORGOT PASSWORD: STEP 1 - identifier ============ */}
+        {mode === 'forgot-identifier' && (
+          <form onSubmit={handleForgotStart} className="space-y-5">
+            <div className="mb-1 text-center">
+              <h2 className="text-lg font-bold text-[#1A1A1A]">Forgot password</h2>
+              <p className="text-[#666666] text-xs mt-1">Enter your email or phone and we'll send a verification code.</p>
+            </div>
+
+            <TextField label="Email or phone number" value={forgotIdentifier} onChange={(e) => setForgotIdentifier(e.target.value)} placeholder="recruiter@tejoma.com or +91 98765 43210" />
+
+            {error && <ErrorBanner text={error} />}
+
+            <button type="submit" disabled={loading} className="w-full bg-[#27AE60] hover:bg-[#219653] active:bg-[#1E8449] text-white text-sm font-bold py-3 rounded-full transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-sm disabled:opacity-60">
+              {loading ? 'Sending...' : <>Send Verification Code <ArrowRight className="w-4 h-4" /></>}
+            </button>
+
+            <button type="button" onClick={resetToLogin} className="w-full text-[#666666] hover:text-[#1A1A1A] text-xs text-center focus:outline-none cursor-pointer">
+              Back to Log In
+            </button>
+          </form>
+        )}
+
+        {/* ============ FORGOT PASSWORD: STEP 2 - OTP ============ */}
+        {mode === 'forgot-otp' && (
+          <OtpStep
+            title="Verify Your Identity"
+            description={`Enter the 6-digit code sent via ${forgotChannel} to`}
+            identifier={forgotIdentifier}
+            otp={forgotOtp}
+            setOtp={setForgotOtp}
+            onSubmit={handleForgotVerify}
+            onBack={() => { setMode('forgot-identifier'); setError(''); setInfo(''); }}
+            onResend={handleResendForgotOtp}
+            loading={loading}
+            error={error}
+            info={info}
+          />
+        )}
+
+        {/* ============ FORGOT PASSWORD: STEP 3 - new password ============ */}
+        {mode === 'forgot-reset' && (
+          forgotDone ? (
+            <div className="bg-[#E5F5E5] border border-[#A8E6C1] p-5 rounded-xl text-[#27AE60] text-center text-sm">
+              <CheckCircle className="w-8 h-8 mx-auto mb-2 text-[#27AE60]" />
+              Password updated successfully. Please log in with your new password.
+              <button onClick={resetToLogin} className="block mx-auto mt-4 text-[#219653] font-semibold hover:underline cursor-pointer">
+                Back to Log In
+              </button>
+            </div>
+          ) : (
+            <form onSubmit={handleForgotReset} className="space-y-5">
+              <div className="mb-1 text-center">
+                <h2 className="text-lg font-bold text-[#1A1A1A]">Set new password</h2>
+                <p className="text-[#666666] text-xs mt-1">Verified! Choose a new password for your account.</p>
               </div>
 
-              {error && <div className="bg-[#FFE5E5] border border-[#FFB3B3] p-3 rounded-lg text-[#E74C3C] text-xs font-medium mb-4">{error}</div>}
-
-              <form onSubmit={handleSignupComplete} className="space-y-4">
-                <div>
-                  <label className="block text-[#666666] text-[10px] font-bold mb-1 uppercase tracking-wider">New Password</label>
-                  <div className="relative">
-                    <Lock className="absolute left-3 top-2.5 w-4 h-4 text-[#999999]" />
-                    <input type="password" required value={signupPassword} onChange={(e) => setSignupPassword(e.target.value)} placeholder="Minimum 8 characters"
-                      className="w-full bg-[#F5F5F5] border border-[#E0E0E0] rounded-xl py-2 pl-9 pr-4 text-[#1A1A1A] text-xs focus:outline-none focus:border-[#27AE60] transition-colors" />
-                  </div>
-                  <PasswordStrengthMeter password={signupPassword} />
-                </div>
-                <div>
-                  <label className="block text-[#666666] text-[10px] font-bold mb-1 uppercase tracking-wider">Confirm Password</label>
-                  <div className="relative">
-                    <Lock className="absolute left-3 top-2.5 w-4 h-4 text-[#999999]" />
-                    <input type="password" required value={signupConfirmPassword} onChange={(e) => setSignupConfirmPassword(e.target.value)} placeholder="Re-enter password"
-                      className="w-full bg-[#F5F5F5] border border-[#E0E0E0] rounded-xl py-2 pl-9 pr-4 text-[#1A1A1A] text-xs focus:outline-none focus:border-[#27AE60] transition-colors" />
-                  </div>
-                </div>
-
-                <button type="submit" disabled={loading} className="w-full bg-[#27AE60] hover:bg-[#219653] active:bg-[#1E8449] text-white text-xs font-semibold py-2 rounded-xl transition-colors mt-2 cursor-pointer shadow-sm disabled:opacity-60">
-                  {loading ? 'Creating Account...' : 'Create Account & Log In'}
-                </button>
-              </form>
-            </>
-          )}
-
-          {/* ============ FORGOT PASSWORD: STEP 1 - identifier ============ */}
-          {mode === 'forgot-identifier' && (
-            <>
-              <div className="mb-6">
-                <h2 className="text-xl font-bold text-[#1A1A1A] tracking-tight">Forgot Password</h2>
-                <p className="text-[#666666] text-xs mt-1">Enter your email or phone and we'll send a verification code.</p>
+              <div>
+                <PasswordField label="New password (8 or more characters)" value={forgotNewPassword} onChange={(e) => setForgotNewPassword(e.target.value)} placeholder="Enter a new password" />
+                <PasswordStrengthMeter password={forgotNewPassword} />
               </div>
+              <PasswordField label="Confirm new password" value={forgotConfirmPassword} onChange={(e) => setForgotConfirmPassword(e.target.value)} placeholder="Re-enter new password" />
 
-              {error && <div className="bg-[#FFE5E5] border border-[#FFB3B3] p-3 rounded-lg text-[#E74C3C] text-xs font-medium mb-4">{error}</div>}
+              {error && <ErrorBanner text={error} />}
 
-              <form onSubmit={handleForgotStart} className="space-y-4">
-                <div>
-                  <label className="block text-[#666666] text-[10px] font-bold mb-1 uppercase tracking-wider">Email or Phone</label>
-                  <div className="relative">
-                    <Mail className="absolute left-3 top-2.5 w-4 h-4 text-[#999999]" />
-                    <input type="text" required value={forgotIdentifier} onChange={(e) => setForgotIdentifier(e.target.value)} placeholder="recruiter@tejoma.com or +91 98765 43210"
-                      className="w-full bg-[#F5F5F5] border border-[#E0E0E0] rounded-xl py-2 pl-9 pr-4 text-[#1A1A1A] text-xs focus:outline-none focus:border-[#27AE60] transition-colors" />
-                  </div>
-                </div>
+              <button type="submit" disabled={loading} className="w-full bg-[#27AE60] hover:bg-[#219653] active:bg-[#1E8449] text-white text-sm font-bold py-3 rounded-full transition-colors cursor-pointer shadow-sm disabled:opacity-60">
+                {loading ? 'Updating...' : 'Update Password'}
+              </button>
+            </form>
+          )
+        )}
 
-                <button type="submit" disabled={loading} className="w-full bg-[#27AE60] hover:bg-[#219653] active:bg-[#1E8449] text-white text-xs font-semibold py-2 rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-sm disabled:opacity-60">
-                  {loading ? 'Sending...' : <>Send Verification Code <ArrowRight className="w-4 h-4" /></>}
-                </button>
-
-                <button type="button" onClick={resetToLogin} className="w-full text-[#666666] hover:text-[#1A1A1A] text-xs text-center mt-2 focus:outline-none cursor-pointer">
-                  Back to Login
-                </button>
-              </form>
-            </>
-          )}
-
-          {/* ============ FORGOT PASSWORD: STEP 2 - OTP ============ */}
-          {mode === 'forgot-otp' && (
-            <OtpStep
-              title="Verify Your Identity"
-              description={`Enter the 6-digit code sent via ${forgotChannel} to`}
-              identifier={forgotIdentifier}
-              otp={forgotOtp}
-              setOtp={setForgotOtp}
-              onSubmit={handleForgotVerify}
-              onBack={() => { setMode('forgot-identifier'); setError(''); setInfo(''); }}
-              onResend={handleResendForgotOtp}
-              loading={loading}
-              error={error}
-              info={info}
-            />
-          )}
-
-          {/* ============ FORGOT PASSWORD: STEP 3 - new password ============ */}
-          {mode === 'forgot-reset' && (
-            forgotDone ? (
-              <div className="bg-[#E5F5E5] border border-[#A8E6C1] p-4 rounded-xl text-[#27AE60] text-center text-sm">
-                <CheckCircle className="w-8 h-8 mx-auto mb-2 text-[#27AE60]" />
-                Password updated successfully. Please log in with your new password.
-                <button onClick={resetToLogin} className="block mx-auto mt-4 text-[#219653] font-medium hover:underline cursor-pointer">
-                  Back to Login
-                </button>
-              </div>
-            ) : (
-              <>
-                <div className="mb-6">
-                  <h2 className="text-xl font-bold text-[#1A1A1A] tracking-tight">Set New Password</h2>
-                  <p className="text-[#666666] text-xs mt-1">Verified! Choose a new password for your account.</p>
-                </div>
-
-                {error && <div className="bg-[#FFE5E5] border border-[#FFB3B3] p-3 rounded-lg text-[#E74C3C] text-xs font-medium mb-4">{error}</div>}
-
-                <form onSubmit={handleForgotReset} className="space-y-4">
-                  <div>
-                    <label className="block text-[#666666] text-[10px] font-bold mb-1 uppercase tracking-wider">New Password</label>
-                    <div className="relative">
-                      <Lock className="absolute left-3 top-2.5 w-4 h-4 text-[#999999]" />
-                      <input type="password" required value={forgotNewPassword} onChange={(e) => setForgotNewPassword(e.target.value)} placeholder="Minimum 8 characters"
-                        className="w-full bg-[#F5F5F5] border border-[#E0E0E0] rounded-xl py-2 pl-9 pr-4 text-[#1A1A1A] text-xs focus:outline-none focus:border-[#27AE60] transition-colors" />
-                    </div>
-                    <PasswordStrengthMeter password={forgotNewPassword} />
-                  </div>
-                  <div>
-                    <label className="block text-[#666666] text-[10px] font-bold mb-1 uppercase tracking-wider">Confirm New Password</label>
-                    <div className="relative">
-                      <Lock className="absolute left-3 top-2.5 w-4 h-4 text-[#999999]" />
-                      <input type="password" required value={forgotConfirmPassword} onChange={(e) => setForgotConfirmPassword(e.target.value)} placeholder="Re-enter password"
-                        className="w-full bg-[#F5F5F5] border border-[#E0E0E0] rounded-xl py-2 pl-9 pr-4 text-[#1A1A1A] text-xs focus:outline-none focus:border-[#27AE60] transition-colors" />
-                    </div>
-                  </div>
-
-                  <button type="submit" disabled={loading} className="w-full bg-[#27AE60] hover:bg-[#219653] active:bg-[#1E8449] text-white text-xs font-semibold py-2 rounded-xl transition-colors mt-2 cursor-pointer shadow-sm disabled:opacity-60">
-                    {loading ? 'Updating...' : 'Update Password'}
-                  </button>
-                </form>
-              </>
-            )
-          )}
-
-        </div>
       </div>
     </div>
   );
+}
+
+// ==================== Shared, plain (icon-less) field components ====================
+
+function TextField({ label, value, onChange, placeholder, hint, type = 'text' }: {
+  label: string;
+  value: string;
+  onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  placeholder?: string;
+  hint?: string;
+  type?: string;
+}) {
+  return (
+    <div>
+      <label className="block text-[#1A1A1A] text-sm font-medium mb-1.5">{label}</label>
+      <input
+        type={type}
+        required
+        value={value}
+        onChange={onChange}
+        placeholder={placeholder}
+        className="w-full bg-white border border-[#E0E0E0] rounded-lg py-2.5 px-3.5 text-[#1A1A1A] text-sm focus:outline-none focus:border-[#27AE60] focus:ring-1 focus:ring-[#27AE60] transition-colors"
+      />
+      {hint && <p className="text-xs text-[#999999] mt-1">{hint}</p>}
+    </div>
+  );
+}
+
+function PasswordField({ label, value, onChange, placeholder }: {
+  label: string;
+  value: string;
+  onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  placeholder?: string;
+}) {
+  const [visible, setVisible] = useState(false);
+  return (
+    <div>
+      <label className="block text-[#1A1A1A] text-sm font-medium mb-1.5">{label}</label>
+      <div className="relative">
+        <input
+          type={visible ? 'text' : 'password'}
+          required
+          value={value}
+          onChange={onChange}
+          placeholder={placeholder}
+          className="w-full bg-white border border-[#E0E0E0] rounded-lg py-2.5 pl-3.5 pr-14 text-[#1A1A1A] text-sm focus:outline-none focus:border-[#27AE60] focus:ring-1 focus:ring-[#27AE60] transition-colors"
+        />
+        <button
+          type="button"
+          onClick={() => setVisible((v) => !v)}
+          className="absolute right-3.5 top-1/2 -translate-y-1/2 text-xs font-semibold text-[#666666] hover:text-[#1A1A1A] cursor-pointer"
+        >
+          {visible ? 'Hide' : 'Show'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ErrorBanner({ text }: { text: string }) {
+  return <div className="bg-[#FFE5E5] border border-[#FFB3B3] p-3 rounded-lg text-[#E74C3C] text-xs font-medium">{text}</div>;
+}
+
+function InfoBanner({ text }: { text: string }) {
+  return <div className="bg-[#E5F5E5] border border-[#A8E6C1] p-3 rounded-lg text-[#27AE60] text-xs font-medium">{text}</div>;
 }
 
 // Matches the backend's 60-second resend cooldown (see OTP_RESEND_COOLDOWN_MS in auth.routes.ts).
@@ -607,22 +582,22 @@ function OtpStep({ title, description, identifier, otp, setOtp, onSubmit, onBack
 
   return (
     <>
-      <div className="mb-6">
+      <div className="mb-6 flex flex-col items-center text-center">
         <div className="w-10 h-10 rounded-full bg-[#E5F5E5] border border-[#A8E6C1] flex items-center justify-center mb-3">
           <ShieldCheck className="w-5 h-5 text-[#27AE60]" />
         </div>
-        <h2 className="text-xl font-bold text-[#1A1A1A] tracking-tight">{title}</h2>
+        <h2 className="text-lg font-bold text-[#1A1A1A]">{title}</h2>
         <p className="text-[#666666] text-xs mt-1">
           {description} <span className="font-semibold text-[#1A1A1A]">{identifier}</span>
         </p>
       </div>
 
-      {error && <div className="bg-[#FFE5E5] border border-[#FFB3B3] p-3 rounded-lg text-[#E74C3C] text-xs font-medium mb-4">{error}</div>}
-      {!error && info && <div className="bg-[#E5F5E5] border border-[#A8E6C1] p-3 rounded-lg text-[#27AE60] text-xs font-medium mb-4">{info}</div>}
+      {error && <div className="mb-4"><ErrorBanner text={error} /></div>}
+      {!error && info && <div className="mb-4"><InfoBanner text={info} /></div>}
 
-      <form onSubmit={onSubmit} className="space-y-4">
+      <form onSubmit={onSubmit} className="space-y-5">
         <div>
-          <label className="block text-[#666666] text-[10px] font-bold mb-1 uppercase tracking-wider">6-Digit Verification Code</label>
+          <label className="block text-[#1A1A1A] text-sm font-medium mb-1.5 text-center">6-digit verification code</label>
           <input
             type="text"
             inputMode="numeric"
@@ -631,25 +606,25 @@ function OtpStep({ title, description, identifier, otp, setOtp, onSubmit, onBack
             value={otp}
             onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
             placeholder="000000"
-            className="w-full bg-[#F5F5F5] border border-[#E0E0E0] rounded-xl py-3 px-4 text-[#1A1A1A] text-lg font-bold tracking-[0.5em] text-center focus:outline-none focus:border-[#27AE60] transition-colors"
+            className="w-full bg-white border border-[#E0E0E0] rounded-lg py-3 px-4 text-[#1A1A1A] text-lg font-bold tracking-[0.5em] text-center focus:outline-none focus:border-[#27AE60] focus:ring-1 focus:ring-[#27AE60] transition-colors"
           />
         </div>
 
         <div className="text-center">
           {cooldown > 0 ? (
-            <span className="text-[10px] text-[#999999]">Resend code in {cooldown}s</span>
+            <span className="text-xs text-[#999999]">Resend code in {cooldown}s</span>
           ) : (
-            <button type="button" onClick={handleResendClick} disabled={loading} className="text-[10px] text-[#27AE60] hover:text-[#219653] font-semibold focus:outline-none cursor-pointer disabled:opacity-60">
+            <button type="button" onClick={handleResendClick} disabled={loading} className="text-xs text-[#27AE60] hover:underline font-semibold focus:outline-none cursor-pointer disabled:opacity-60">
               Didn't get a code? Resend
             </button>
           )}
         </div>
 
-        <button type="submit" disabled={loading} className="w-full bg-[#27AE60] hover:bg-[#219653] active:bg-[#1E8449] text-white text-xs font-semibold py-2 rounded-xl transition-colors mt-2 cursor-pointer shadow-sm disabled:opacity-60">
+        <button type="submit" disabled={loading} className="w-full bg-[#27AE60] hover:bg-[#219653] active:bg-[#1E8449] text-white text-sm font-bold py-3 rounded-full transition-colors cursor-pointer shadow-sm disabled:opacity-60">
           {loading ? 'Verifying...' : 'Verify Code'}
         </button>
 
-        <button type="button" onClick={onBack} className="w-full text-[#666666] hover:text-[#1A1A1A] text-[10px] text-center mt-2 focus:outline-none cursor-pointer flex items-center justify-center gap-1">
+        <button type="button" onClick={onBack} className="w-full text-[#666666] hover:text-[#1A1A1A] text-xs text-center focus:outline-none cursor-pointer flex items-center justify-center gap-1">
           <ArrowLeft className="w-3 h-3" /> Back
         </button>
       </form>
@@ -685,7 +660,7 @@ function PasswordStrengthMeter({ password }: { password: string }) {
           <div key={i} className="h-1 flex-1 rounded-full transition-colors" style={{ backgroundColor: i < score ? color : '#E0E0E0' }} />
         ))}
       </div>
-      <span className="text-[9px] font-bold mt-1 block" style={{ color }}>{label}</span>
+      <span className="text-[11px] font-bold mt-1 block" style={{ color }}>{label}</span>
     </div>
   );
 }

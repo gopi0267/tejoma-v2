@@ -2,49 +2,93 @@ import { Router } from 'express';
 import { db } from '../db.js';
 import { Candidate } from '../types.js';
 import { requireAuth, requireRole } from '../middleware/auth.middleware.js';
+import { indexCandidateInBackground, removeCandidateFromIndex } from '../rag.service.js';
+import { indexCandidateEmbeddingInBackground } from '../matching/embeddingIndex.js';
 
 const router = Router();
 router.use(requireAuth, requireRole('recruiter', 'admin'));
 
-router.get('/candidates', async (req, res) => {
+// Every field is stored as VARCHAR/TEXT in the DB (see migration-31-cols.sql) - list fields
+// (skills, previous_companies, certifications) are just arrays of strings joined with a
+// separator. Coercing years_of_experience/willingness_to_relocate etc. to Number/boolean here
+// was silently destroying real extracted data (e.g. "6+ years" -> 0) before it ever reached the
+// database, so every field below is passed through as-is instead.
+const toArray = (val: any): string[] => {
+  if (Array.isArray(val)) return val.map(v => String(v).trim()).filter(Boolean);
+  if (typeof val === 'string') return val.split(/[,;]/).map(s => s.trim()).filter(s => s && s.toLowerCase() !== 'null');
+  return [];
+};
+const toText = (val: any): string => {
+  if (val === undefined || val === null) return '';
+  const s = String(val).trim();
+  return s.toLowerCase() === 'null' ? '' : s;
+};
+
+function candidatePayloadFromExtracted(cand: Partial<Candidate>): Omit<Candidate, 'id' | 'created_at' | 'updated_at'> {
+  return {
+    name: toText(cand.name),
+    email: toText(cand.email),
+    phone: toText(cand.phone),
+    skills: toArray(cand.skills),
+    primary_skills: toText(cand.primary_skills),
+    secondary_skills: toText(cand.secondary_skills),
+    years_of_experience: toText(cand.years_of_experience),
+    current_location: toText(cand.current_location),
+    preferred_location: toText(cand.preferred_location),
+    current_company: toText(cand.current_company),
+    previous_companies: toArray(cand.previous_companies),
+    current_job_title: toText(cand.current_job_title),
+    industry_domain: toText(cand.industry_domain),
+    education: toText(cand.education),
+    highest_qualification: toText(cand.highest_qualification),
+    graduation_year: toText(cand.graduation_year),
+    university: toText(cand.university),
+    certifications: toArray(cand.certifications),
+    projects: toText(cand.projects),
+    technical_tools: toText(cand.technical_tools),
+    languages_known: toText(cand.languages_known),
+    current_ctc: toText(cand.current_ctc),
+    expected_ctc: toText(cand.expected_ctc),
+    notice_period: toText(cand.notice_period),
+    willingness_to_relocate: toText(cand.willingness_to_relocate),
+    linkedin_url: toText(cand.linkedin_url),
+    github_or_portfolio_url: toText(cand.github_or_portfolio_url),
+    resume_summary: toText(cand.resume_summary),
+    resume_text: toText(cand.resume_text) || `${toText(cand.name)} - ${toText(cand.current_job_title)}`,
+    ai_confidence_score: toText(cand.ai_confidence_score),
+    extraction_status: cand.extraction_status || 'Complete',
+    resume_file_path: cand.resume_file_path,
+    candidate_hash: cand.candidate_hash,
+    resume_embedding: cand.resume_embedding,
+  };
+}
+
+router.get('/candidates', async (_req, res) => {
     const candidates = await db.getCandidates();
     res.json(candidates);
 });
-  
+
 router.post('/candidates', async (req, res) => {
     try {
-      const { name, email, phone, skills, years_of_experience, current_location, current_company, current_job_title, salary_expectation, education, notice_period, willingness_to_relocate, industry_domain, certifications, resume_text } = req.body;
-      
+      const { name, email } = req.body;
+
       if (!name || !email) {
         return res.status(400).json({ error: 'Name and Email are required' });
       }
-  
-      const newCandidate = await db.createCandidate({
-        name,
-        email,
-        phone: phone || '',
-        skills: Array.isArray(skills) ? skills : skills ? skills.split(',').map((s: string) => s.trim()) : [],
-        years_of_experience: years_of_experience || 0,
-        current_location: current_location || '',
-        current_company: current_company || '',
-        previous_companies: [],
-        current_job_title: current_job_title || '',
-        salary_expectation: salary_expectation || 0,
-        education: education || '',
-        notice_period: notice_period || '',
-        willingness_to_relocate: willingness_to_relocate === true || willingness_to_relocate === 'true',
-        industry_domain: industry_domain || '',
-        certifications: certifications ? (Array.isArray(certifications) ? certifications : [certifications]) : [],
-        resume_text: resume_text || `${name} - ${current_job_title}`
-      });
-  
+
+      const newCandidate = await db.createCandidate(candidatePayloadFromExtracted(req.body));
+      if (newCandidate) {
+        indexCandidateInBackground(newCandidate);
+        indexCandidateEmbeddingInBackground(newCandidate);
+      }
+
       res.status(201).json(newCandidate);
     } catch (error: any) {
       console.error('Failed to create candidate:', error);
       res.status(500).json({ error: 'Failed to create candidate: ' + error.message });
     }
 });
-  
+
 router.get('/candidates/:id', async (req, res) => {
     const id = parseInt(req.params.id);
     const candidates = await db.getCandidates();
@@ -54,49 +98,43 @@ router.get('/candidates/:id', async (req, res) => {
     }
     res.json(candidate);
 });
-  
+
 router.delete('/candidates/:id', async (req, res) => {
+    const id = parseInt(req.params.id);
+    const deleted = await db.deleteCandidate(id);
+    if (!deleted) {
+      return res.status(404).json({ error: 'Candidate not found' });
+    }
+    removeCandidateFromIndex(id).catch((err) => console.error(`RAG unindex failed for candidate ${id}:`, err.message));
     res.status(204).send();
 });
-  
+
 // ==================== BULK UPLOAD CANDIDATES (from Resume Parser) ====================
 router.post('/bulk-upload-candidates', async (req, res) => {
     try {
       const candidates: Partial<Candidate>[] = req.body;
-  
+
       if (!Array.isArray(candidates) || candidates.length === 0) {
         return res.status(400).json({ error: 'No candidate data provided' });
       }
-  
+
       let insertedCount = 0;
       const errors = [];
-  
+
       for (const cand of candidates) {
         try {
           if (!cand.name || !cand.email) {
             errors.push({ candidate: cand.name || 'Unknown', error: 'Missing name or email' });
             continue;
           }
-  
-          await db.createCandidate({
-            name: cand.name,
-            email: cand.email,
-            phone: cand.phone || '',
-            skills: Array.isArray(cand.skills) ? cand.skills : (typeof cand.skills === 'string' ? cand.skills.split(',').map(s => s.trim()) : []),
-            years_of_experience: Number(cand.years_of_experience) || 0,
-            current_location: cand.current_location || '',
-            current_company: cand.current_company || '',
-            previous_companies: Array.isArray(cand.previous_companies) ? cand.previous_companies : (typeof cand.previous_companies === 'string' ? cand.previous_companies.split(',').map(s => s.trim()) : []),
-            current_job_title: cand.current_job_title || '',
-            salary_expectation: Number(cand.salary_expectation) || 0,
-            education: cand.education || '',
-            notice_period: cand.notice_period || '',
-            willingness_to_relocate: cand.willingness_to_relocate === 'true' || cand.willingness_to_relocate === true,
-            industry_domain: cand.industry_domain || '',
-            certifications: Array.isArray(cand.certifications) ? cand.certifications : (typeof cand.certifications === 'string' ? cand.certifications.split(',').map(s => s.trim()) : []),
-            // The 'as any' is used here to bridge the Partial<Candidate> from the request
-            // with the full object expected by createCandidate.
-          } as any);
+
+          const created = await db.createCandidate(candidatePayloadFromExtracted(cand));
+          if (!created) {
+            errors.push({ candidate: cand.email, error: 'Database insert returned no row' });
+            continue;
+          }
+          indexCandidateInBackground(created);
+          indexCandidateEmbeddingInBackground(created);
           insertedCount++;
         } catch (dbError: any) {
           console.error(`DB insert failed for ${cand.email}:`, dbError.message);
@@ -125,36 +163,22 @@ router.post('/candidates/import', async (req, res) => {
       for (let i = 0; i < candidates.length; i++) {
         try {
           const candidate = candidates[i];
-          const { name, email, phone, skills, years_of_experience, current_location, current_company, current_job_title, salary_expectation, education, notice_period, willingness_to_relocate, industry_domain, certifications, resume_text } = candidate;
-  
+
           // Validate
-          if (!name || !email) {
+          if (!candidate.name || !candidate.email) {
             errors.push(`Row ${i + 1}: Missing name or email`);
             continue;
           }
-  
+
           // Create candidate
-          const newCandidate = await db.createCandidate({
-            name,
-            email,
-            phone: phone || '',
-            skills: Array.isArray(skills) ? skills : (typeof skills === 'string' ? skills.split(',').map(s => s.trim()) : []),
-            years_of_experience: parseInt(years_of_experience) || 0,
-            current_location: current_location || '',
-            current_company: current_company || '',
-            previous_companies: [],
-            current_job_title: current_job_title || '',
-            salary_expectation: parseInt(salary_expectation) || 0,
-            education: education || '',
-            notice_period: notice_period || '',
-            willingness_to_relocate: willingness_to_relocate === true || willingness_to_relocate === 'true',
-            industry_domain: industry_domain || '',
-            certifications: certifications ? (Array.isArray(certifications) ? certifications : [certifications]) : [],
-            resume_text: resume_text || `${name} - ${current_job_title || 'Professional'}`
-          });
-  
+          const newCandidate = await db.createCandidate(candidatePayloadFromExtracted(candidate));
+          if (newCandidate) {
+            indexCandidateInBackground(newCandidate);
+            indexCandidateEmbeddingInBackground(newCandidate);
+          }
+
           importedCandidates.push(newCandidate);
-          console.log(`✅ Imported: ${name}`);
+          console.log(`✅ Imported: ${candidate.name}`);
         } catch (err: any) {
           console.error(`❌ Error importing candidate ${i + 1}:`, err.message);
           errors.push(`Row ${i + 1}: ${err.message}`);

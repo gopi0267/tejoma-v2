@@ -1,0 +1,9 @@
+fastapi==0.139.0
+uvicorn==0.51.0
+spacy==3.8.13
+gliner==0.2.27
+torch==2.13.0
+transformers==5.6.2
+
+# After installing, download the spaCy English model once:
+#   python -m spacy download en_core_web_sm

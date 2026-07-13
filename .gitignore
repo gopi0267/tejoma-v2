@@ -19,3 +19,11 @@ db_store.json
 # Local tool/editor state - not shared project config
 .claude/
 .vscode/
+
+# Trained ML model artifacts - generated at runtime via /train, not source
+python-services/matching-ml-service/models/
+
+# Python runtime/cache artifacts
+__pycache__/
+*.pyc
+python-services/**/.venv/

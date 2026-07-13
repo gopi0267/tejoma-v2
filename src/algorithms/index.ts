@@ -15,3 +15,10 @@ export { euclideanDistance, euclideanMatchScore } from './euclidean';
 
 // Levenshtein Distance - String similarity (typos, job titles)
 export { levenshteinSimilarity } from './levenshtein';
+
+// BERT (Sentence-Transformer) embeddings - semantic resume/JD similarity
+export { generateEmbedding, generateEmbeddingsBatch } from './bert-embeddings';
+
+// RandomForest + XGBoost + LightGBM ensemble - trained on recruiter swipe history
+export { trainEnsemble, predictBatch, getEnsembleHealth } from './ml-models';
+export type { TrainSample, TrainResult, EnsemblePrediction } from './ml-models';

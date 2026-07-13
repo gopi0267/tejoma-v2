@@ -41,8 +41,7 @@ async function extractTextFromFile(filePath: string, originalName: string): Prom
 
 router.post('/parse-resume', upload.single('file'), async (req, res) => {
   // If the browser disconnects (closed tab, its own fetch timeout, etc.), actually cancel the
-  // in-flight Ollama call instead of leaving it running orphaned in the background - that was
-  // previously found to keep consuming RAM/CPU and starving whichever upload came next.
+  // in-flight Gemini call instead of leaving it running orphaned in the background.
   const controller = new AbortController();
   req.on('close', () => controller.abort());
 

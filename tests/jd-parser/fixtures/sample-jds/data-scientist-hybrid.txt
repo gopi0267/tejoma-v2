@@ -1,0 +1,29 @@
+Data Scientist - Machine Learning
+
+Job Title: Data Scientist
+
+About the Role:
+Join our AI research team building recommendation systems used by millions of users daily.
+This is a hybrid role based out of our Hyderabad office.
+
+Requirements:
+Minimum 4 Years of experience in Machine Learning and Data Science.
+Strong proficiency in Python, Pandas, NumPy, and Scikit-learn.
+Experience with TensorFlow or PyTorch for Deep Learning projects.
+Working knowledge of SQL and PostgreSQL.
+M.Tech or MSc in Computer Science, Statistics, or a related field.
+
+Good to Have:
+Experience with NLP and spaCy.
+Exposure to AWS SageMaker.
+
+Key Responsibilities:
+Design and train machine learning models for production use cases.
+Analyze large datasets to extract actionable insights.
+Collaborate with engineering to deploy models at scale.
+
+Location: Hyderabad, Hybrid
+Employment Type: Full-time
+Notice Period: 60 days
+Openings: 1
+Salary: 20-30 LPA

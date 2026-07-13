@@ -553,29 +553,29 @@ export default function SwipeInterface({
         /* 3. Responsive Card sizes */
         .recruitment-card {
           width: calc(100% - 24px);
-          max-width: 360px;
-          height: 540px;
+          max-width: 400px;
+          height: 480px;
           border-radius: 24px;
           box-shadow: 0 20px 40px rgba(0,0,0,0.15);
           background: #FFFFFF;
           border: 1px solid #E0E0E0;
         }
-        
+
         @media (min-width: 768px) {
           .recruitment-card {
-            width: 380px;
-            max-width: 380px;
-            height: 600px;
+            width: 460px;
+            max-width: 460px;
+            height: 540px;
             border-radius: 24px;
             box-shadow: 0 20px 40px rgba(0,0,0,0.15);
           }
         }
-        
+
         @media (min-width: 1200px) {
           .recruitment-card {
-            width: 420px;
-            max-width: 420px;
-            height: 680px;
+            width: 520px;
+            max-width: 520px;
+            height: 600px;
             border-radius: 24px;
             box-shadow: 0 20px 40px rgba(0,0,0,0.15);
           }

@@ -4,14 +4,13 @@ import {
     activeModelType,
     isRetrainingInProgress,
     lastTrainingTimestamp,
-    computeBaseMatchMetrics,
     setActiveModelType,
     setRetrainingStatus,
     updateLastTrainingTimestamp,
-    setTrainedModel
+    trainModelOnStartup,
 } from '../services.js';
+import { getEnsembleHealth } from '../algorithms/ml-models.js';
 import { broadcastEvent } from '../realtime.js';
-import { RandomForestClassifier, extractFeatures } from '../ml.js';
 import { requireAuth, requireRole } from '../middleware/auth.middleware.js';
 
 const router = Router();
@@ -24,7 +23,7 @@ router.get('/ml/config', requireRole('recruiter', 'admin'), (req, res) => {
       lastTrainingTimestamp
     });
 });
-  
+
 router.post('/ml/config', requireRole('admin'), (req, res) => {
     const { activeModelType: newType } = req.body;
     if (newType && ['heuristic', 'ml_tree', 'random_forest', 'hybrid_weighted'].includes(newType)) {
@@ -34,57 +33,39 @@ router.post('/ml/config', requireRole('admin'), (req, res) => {
       res.status(400).json({ error: 'Invalid activeModelType' });
     }
 });
-  
+
+// Retrains the RandomForest + XGBoost + LightGBM ensemble (python-services/matching-ml-service)
+// on the full swipe history. trainModelOnStartup builds the feature vectors and calls the
+// service's /train endpoint - shared with the boot-time training call, so there's one training
+// code path, not two.
 router.post('/ml/train', requireRole('admin'), async (req, res) => {
     setRetrainingStatus(true);
     broadcastEvent('model-training-started', {});
     try {
-      const swipes = await db.getSwipes();
-      const X: number[][] = [];
-      const y: number[] = [];
-  
-      const candidates = await db.getCandidates();
-      const jobs = await db.getJobs();
-  
-      for (const swipe of swipes) {
-        const candidate = candidates.find(c => c.id === swipe.candidate_id);
-        const job = jobs.find(j => j.id === swipe.job_id);
-        if (!candidate || !job) continue;
-  
-        const { skillScore, expDiff, locDist, salOverlap, embedSim } = computeBaseMatchMetrics(job, candidate);
-        const features = extractFeatures(skillScore, expDiff, locDist, salOverlap, embedSim);
-        
-        X.push(features);
-        y.push(swipe.action);
-      }
-  
-      if (X.length >= 10) {
-        const rf = new RandomForestClassifier(100, 15, 5);
-        rf.fit(X, y);
-        setTrainedModel(rf);
-      }
-  
-      updateLastTrainingTimestamp();
+      await trainModelOnStartup();
       setRetrainingStatus(false);
-  
-      broadcastEvent('model-retrained', { new_version: 'v2.1.0_trained', accuracy: 0.85, improvement_percentage: 2.5 });
-  
-      res.json({ success: true, activeModelType, isRetrainingInProgress, lastTrainingTimestamp });
+
+      const health = await getEnsembleHealth();
+      broadcastEvent('model-retrained', { trained: health?.ensembleTrained ?? false, sampleCount: health?.trainedSampleCount ?? 0 });
+
+      res.json({ success: true, activeModelType, isRetrainingInProgress, lastTrainingTimestamp, ensembleTrained: health?.ensembleTrained ?? false, trainedSampleCount: health?.trainedSampleCount ?? 0 });
     } catch (error: any) {
       setRetrainingStatus(false);
       res.status(500).json({ error: 'Failed to retrain: ' + error.message });
     }
 });
-  
-router.get('/ml/model/status', requireRole('recruiter', 'admin'), (req, res) => {
+
+router.get('/ml/model/status', requireRole('recruiter', 'admin'), async (req, res) => {
+    const [health, swipes] = await Promise.all([getEnsembleHealth(), db.getSwipes()]);
     res.json({
-      current_version: 'v1.0.0_init',
-      accuracy: 0.845,
-      training_examples: 48,
-      last_trained: new Date().toISOString()
+      ensemble_trained: health?.ensembleTrained ?? false,
+      trained_sample_count: health?.trainedSampleCount ?? 0,
+      total_swipes_available: swipes.length,
+      last_trained: lastTrainingTimestamp,
+      ml_service_reachable: health !== null,
     });
 });
-  
+
 router.get('/ml/model/versions', requireRole('recruiter', 'admin'), (req, res) => {
     res.json([]);
 });

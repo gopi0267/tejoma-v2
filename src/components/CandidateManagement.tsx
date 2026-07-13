@@ -269,28 +269,28 @@ export default function CandidateManagement({ candidates, fetchCandidates }: Can
           <div className="grid gap-4">
             {/* Table Header */}
             <div className="grid grid-cols-5 gap-4 px-6 py-3 bg-slate-200 rounded-lg font-semibold text-sm text-slate-700">
-              <div>Name</div>
-              <div>Email</div>
-              <div>Position</div>
-              <div>Experience</div>
-              <div>Actions</div>
+              <div className="min-w-0">Name</div>
+              <div className="min-w-0">Email</div>
+              <div className="min-w-0">Position</div>
+              <div className="min-w-0">Experience</div>
+              <div className="min-w-0">Actions</div>
             </div>
 
             {/* Table Rows */}
             {filteredCandidates.map((candidate) => (
               <div key={candidate.id} className="grid grid-cols-5 gap-4 px-6 py-4 bg-white rounded-lg border border-slate-200 hover:border-slate-300 hover:shadow-md transition-all items-center">
-                <div>
-                  <p className="font-semibold text-slate-900">{candidate.name}</p>
-                  {candidate.current_company && <p className="text-xs text-slate-600 mt-1">{candidate.current_company}</p>}
+                <div className="min-w-0">
+                  <p className="font-semibold text-slate-900 truncate" title={candidate.name}>{candidate.name}</p>
+                  {candidate.current_company && <p className="text-xs text-slate-600 mt-1 truncate" title={candidate.current_company}>{candidate.current_company}</p>}
                 </div>
-                <div>
-                  <p className="text-sm text-slate-700">{candidate.email}</p>
+                <div className="min-w-0">
+                  <p className="text-sm text-slate-700 truncate" title={candidate.email}>{candidate.email}</p>
                 </div>
-                <div>
-                  <p className="text-sm text-slate-700">{candidate.current_job_title || '-'}</p>
+                <div className="min-w-0">
+                  <p className="text-sm text-slate-700 truncate" title={candidate.current_job_title || ''}>{candidate.current_job_title || '-'}</p>
                 </div>
-                <div>
-                  <p className="text-sm text-slate-700">{candidate.years_of_experience} yrs</p>
+                <div className="min-w-0">
+                  <p className="text-sm text-slate-700 truncate" title={candidate.years_of_experience}>{candidate.years_of_experience || '-'}</p>
                 </div>
                 <div className="flex gap-2">
                   <button
@@ -516,7 +516,7 @@ export default function CandidateManagement({ candidates, fetchCandidates }: Can
       {/* ==================== DETAIL VIEW MODAL ==================== */}
       {selectedCandidate && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl w-full max-w-2xl max-h-[80vh] overflow-auto shadow-2xl">
+          <div className="bg-white rounded-xl w-full max-w-2xl max-h-[85vh] overflow-auto shadow-2xl">
             <div className="sticky top-0 bg-gradient-to-r from-slate-50 to-slate-100 flex items-center justify-between p-6 border-b border-slate-200">
               <h2 className="text-xl font-bold text-slate-900">{selectedCandidate.name}</h2>
               <button onClick={() => setSelectedCandidate(null)} className="p-2 hover:bg-slate-300 rounded-lg transition-colors">
@@ -525,41 +525,65 @@ export default function CandidateManagement({ candidates, fetchCandidates }: Can
             </div>
 
             <div className="p-8 space-y-6">
+              {/* Contact */}
               <div className="grid grid-cols-2 gap-6">
                 <div>
                   <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Email</p>
-                  <p className="text-slate-900 font-medium mt-2">{selectedCandidate.email}</p>
+                  <p className="text-slate-900 font-medium mt-2">{selectedCandidate.email || '-'}</p>
                 </div>
                 <div>
                   <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Phone</p>
                   <p className="text-slate-900 font-medium mt-2">{selectedCandidate.phone || '-'}</p>
                 </div>
+                <div>
+                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">LinkedIn</p>
+                  <p className="text-slate-900 font-medium mt-2 truncate">{selectedCandidate.linkedin_url || '-'}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">GitHub / Portfolio</p>
+                  <p className="text-slate-900 font-medium mt-2 truncate">{selectedCandidate.github_or_portfolio_url || '-'}</p>
+                </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-6">
+              {/* Professional */}
+              <div className="grid grid-cols-2 gap-6 pt-6 border-t border-slate-100">
                 <div>
                   <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Current Position</p>
                   <p className="text-slate-900 font-medium mt-2">{selectedCandidate.current_job_title || '-'}</p>
                 </div>
                 <div>
                   <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Experience</p>
-                  <p className="text-slate-900 font-medium mt-2">{selectedCandidate.years_of_experience} years</p>
+                  <p className="text-slate-900 font-medium mt-2">{selectedCandidate.years_of_experience || '-'}</p>
                 </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-6">
                 <div>
-                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Company</p>
+                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Current Company</p>
                   <p className="text-slate-900 font-medium mt-2">{selectedCandidate.current_company || '-'}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Previous Companies</p>
+                  <p className="text-slate-900 font-medium mt-2">{selectedCandidate.previous_companies?.join(', ') || '-'}</p>
                 </div>
                 <div>
                   <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Location</p>
                   <p className="text-slate-900 font-medium mt-2">📍 {selectedCandidate.current_location || '-'}</p>
                 </div>
+                <div>
+                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Preferred Location</p>
+                  <p className="text-slate-900 font-medium mt-2">{selectedCandidate.preferred_location || '-'}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Industry / Domain</p>
+                  <p className="text-slate-900 font-medium mt-2">{selectedCandidate.industry_domain || '-'}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Willing to Relocate</p>
+                  <p className="text-slate-900 font-medium mt-2">{selectedCandidate.willingness_to_relocate || '-'}</p>
+                </div>
               </div>
 
+              {/* Skills */}
               {selectedCandidate.skills && selectedCandidate.skills.length > 0 && (
-                <div>
+                <div className="pt-6 border-t border-slate-100">
                   <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-3">Skills</p>
                   <div className="flex flex-wrap gap-2">
                     {selectedCandidate.skills.map((skill, idx) => (
@@ -570,11 +594,66 @@ export default function CandidateManagement({ candidates, fetchCandidates }: Can
                   </div>
                 </div>
               )}
-
-              <div>
-                <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Salary Expectation</p>
-                <p className="text-slate-900 font-medium mt-2">${selectedCandidate.salary_expectation?.toLocaleString() || '-'}</p>
+              <div className="grid grid-cols-2 gap-6">
+                <div>
+                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Technical Tools</p>
+                  <p className="text-slate-900 font-medium mt-2">{selectedCandidate.technical_tools || '-'}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Languages Known</p>
+                  <p className="text-slate-900 font-medium mt-2">{selectedCandidate.languages_known || '-'}</p>
+                </div>
               </div>
+
+              {/* Education */}
+              <div className="grid grid-cols-2 gap-6 pt-6 border-t border-slate-100">
+                <div>
+                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Highest Qualification</p>
+                  <p className="text-slate-900 font-medium mt-2">{selectedCandidate.highest_qualification || '-'}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">University</p>
+                  <p className="text-slate-900 font-medium mt-2">{selectedCandidate.university || '-'}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Graduation Year</p>
+                  <p className="text-slate-900 font-medium mt-2">{selectedCandidate.graduation_year || '-'}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Certifications</p>
+                  <p className="text-slate-900 font-medium mt-2">{selectedCandidate.certifications?.join(', ') || '-'}</p>
+                </div>
+              </div>
+
+              {/* Compensation */}
+              <div className="grid grid-cols-2 gap-6 pt-6 border-t border-slate-100">
+                <div>
+                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Current CTC</p>
+                  <p className="text-slate-900 font-medium mt-2">{selectedCandidate.current_ctc || '-'}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Expected CTC</p>
+                  <p className="text-slate-900 font-medium mt-2">{selectedCandidate.expected_ctc || '-'}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Notice Period</p>
+                  <p className="text-slate-900 font-medium mt-2">{selectedCandidate.notice_period || '-'}</p>
+                </div>
+              </div>
+
+              {selectedCandidate.projects && (
+                <div className="pt-6 border-t border-slate-100">
+                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Projects</p>
+                  <p className="text-slate-900 mt-2 whitespace-pre-wrap">{selectedCandidate.projects}</p>
+                </div>
+              )}
+
+              {selectedCandidate.resume_summary && (
+                <div className="pt-6 border-t border-slate-100">
+                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Resume Summary</p>
+                  <p className="text-slate-900 mt-2 whitespace-pre-wrap">{selectedCandidate.resume_summary}</p>
+                </div>
+              )}
 
               <div className="flex gap-3 pt-6 border-t border-slate-200">
                 <button

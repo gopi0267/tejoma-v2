@@ -1,0 +1,28 @@
+Frontend Developer (Remote, US)
+
+Job Summary:
+We're a healthcare technology startup building tools that help clinics run more efficiently.
+We're looking for a Frontend Developer to help us build a delightful, accessible product
+experience for our growing customer base.
+
+Must Have Skills:
+3+ years of experience with ReactJS, TypeScript, and Tailwind CSS.
+Experience with REST API integration and GraphQL.
+Familiarity with Jest and Cypress for testing.
+Bachelor's degree (Any Degree) or equivalent practical experience.
+
+Preferred Qualifications:
+Experience with Next.js and Figma.
+AWS Certified Developer is a bonus.
+
+What You'll Do:
+Build and maintain reusable React components.
+Partner with designers to implement pixel-perfect UI.
+Write unit and integration tests for new features.
+Participate in code reviews and technical design discussions.
+
+Location: Remote
+Employment Type: Full-time
+Notice Period: Immediate joiners preferred
+Openings: 2
+Salary: USD 90K - 130K
