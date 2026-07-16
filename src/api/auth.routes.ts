@@ -38,6 +38,14 @@ function toUserInfo(user: any) {
   return { id: user.id, name: user.name, email: user.email || '', role: user.role };
 }
 
+// Best-effort company lookup for session responses - falls back to null so a missing/deleted
+// company row never breaks login/refresh/me (company_id itself is what actually gates access).
+async function toCompanyInfo(companyId: number) {
+  const company = await db.getCompanyById(companyId);
+  if (!company) return null;
+  return { id: company.id, name: company.name, logo_url: company.logo_url, plan: company.plan };
+}
+
 async function findUserByIdentifier(identifier: { type: 'email' | 'phone'; value: string }) {
   return identifier.type === 'email' ? db.getUserByEmail(identifier.value) : db.getUserByPhone(identifier.value);
 }
@@ -131,6 +139,9 @@ router.post('/auth/signup/start', otpRequestLimiter, async (req, res) => {
       return res.status(429).json({ error: limitError });
     }
 
+    // Always creates a brand-new company - there is no join-an-existing-company-by-name flow
+    // (that previously let anyone join or silently create a company just by typing its exact
+    // name). Joining an existing teammate's company is deferred to a future invite feature.
     const company = await db.getOrCreateCompany(company_name);
     if (!company) {
       return res.status(500).json({ error: 'Failed to set up company workspace' });
@@ -206,76 +217,14 @@ router.post('/auth/verify-otp', async (req, res) => {
   }
 });
 
-// ==================== SIGN UP: COMPLETE (set password, create account, issue session) ====================
-router.post('/auth/signup/complete', async (req, res) => {
-  try {
-    const { name, identifier: rawIdentifier, company_id, password, confirm_password, remember } = req.body;
-
-    if (!name || !rawIdentifier || !company_id || !password || !confirm_password) {
-      return res.status(400).json({ error: 'Missing required fields' });
-    }
-    if (password !== confirm_password) {
-      return res.status(400).json({ error: 'Passwords do not match' });
-    }
-
-    const identifier = normalizeIdentifier(rawIdentifier);
-    if (!identifier) {
-      return res.status(400).json({ error: 'Invalid email or phone number' });
-    }
-
-    const strength = validatePassword(password, [name, identifier.value]);
-    if (!strength.valid) {
-      return res.status(400).json({ error: strength.errors[0], errors: strength.errors, password_strength: strength.label });
-    }
-
-    const otpRecord = await db.getLatestOtpRecord({
-      email: identifier.type === 'email' ? identifier.value : null,
-      phone: identifier.type === 'phone' ? identifier.value : null,
-      purpose: 'signup',
-    });
-    if (!otpRecord || !otpRecord.verified) {
-      return res.status(400).json({ error: 'Please verify your email/phone first' });
-    }
-
-    const existingUser = await findUserByIdentifier(identifier);
-    if (existingUser) {
-      return res.status(400).json({ error: 'An account with this email/phone already exists' });
-    }
-
-    const passwordHash = await bcrypt.hash(password, 10);
-    const newUser = await db.createUser({
-      name,
-      email: identifier.type === 'email' ? identifier.value : null,
-      phone: identifier.type === 'phone' ? identifier.value : null,
-      password_hash: passwordHash,
-      company_id: Number(company_id),
-      role: 'recruiter',
-      is_active: true,
-    } as any);
-
-    if (!newUser) {
-      return res.status(500).json({ error: 'Failed to create account' });
-    }
-
-    await db.addPasswordHistory(newUser.id, passwordHash);
-
-    await db.deleteOtpRecords({
-      email: identifier.type === 'email' ? identifier.value : null,
-      phone: identifier.type === 'phone' ? identifier.value : null,
-      purpose: 'signup',
-    });
-
-    const access_token = await issueSession(req, res, newUser, remember !== false);
-    res.status(201).json({
-      message: 'Account created successfully',
-      access_token,
-      user_info: toUserInfo(newUser),
-      company_id: newUser.company_id,
-    });
-  } catch (error) {
-    console.error('Signup complete error:', error);
-    res.status(500).json({ error: 'Account creation failed' });
-  }
+// ==================== SIGN UP: COMPLETE (retired - see Company Approval Workflow) ====================
+// Public self-signup used to create a brand-new company/tenant instantly here with no review,
+// which is exactly the gap the Company Approval Workflow closes. This endpoint is disabled
+// (rather than deleted) so any stale client/bookmark gets a clear redirect instead of a 404 -
+// /auth/signup/start and /auth/verify-otp are untouched since verify-otp is shared with
+// password-reset.
+router.post('/auth/signup/complete', async (_req, res) => {
+  res.status(403).json({ error: 'Public self-signup has been replaced by Company Registration. Submit a request for review.' });
 });
 
 // ==================== LOGIN ====================
@@ -295,9 +244,19 @@ router.post('/auth/login', async (req, res) => {
 
     const user = await findUserByIdentifier(identifier);
     if (!user) {
+      // No account yet - check whether this identifier belongs to a company registration
+      // request instead, so a prospective admin gets a meaningful status message rather than
+      // a generic "invalid credentials" (which would be indistinguishable from a typo).
+      const request = await db.getCompanyRegistrationRequestByIdentifier(identifier);
+      if (request?.status === 'pending') {
+        return res.status(401).json({ error: 'Your company registration is pending administrator approval.' });
+      }
+      if (request?.status === 'rejected') {
+        return res.status(401).json({ error: 'Your company registration has been rejected.' });
+      }
       return res.status(401).json({ error: 'Invalid email or password' });
     }
-    if (!user.is_active) {
+    if (!user.is_active || user.deleted_at) {
       return res.status(401).json({ error: 'This account has been deactivated' });
     }
 
@@ -307,10 +266,12 @@ router.post('/auth/login', async (req, res) => {
     }
 
     const access_token = await issueSession(req, res, user, remember !== false);
+    db.updateLastLogin(user.id).catch((err) => console.error('Failed to record last login:', err));
     res.json({
       access_token,
       user_info: toUserInfo(user),
       company_id: user.company_id,
+      company: await toCompanyInfo(user.company_id),
     });
   } catch (error) {
     console.error('Login error:', error);
@@ -349,7 +310,7 @@ router.post('/auth/refresh', async (req, res) => {
     }
 
     const user = await db.getUserById(record.user_id);
-    if (!user || !user.is_active) {
+    if (!user || !user.is_active || user.deleted_at) {
       await db.revokeRefreshTokenByHash(tokenHash);
       clearAuthCookies(res);
       return res.status(401).json({ error: 'Account unavailable' });
@@ -364,6 +325,7 @@ router.post('/auth/refresh', async (req, res) => {
       access_token,
       user_info: toUserInfo(user),
       company_id: user.company_id,
+      company: await toCompanyInfo(user.company_id),
     });
   } catch (error) {
     console.error('Refresh error:', error);
@@ -377,10 +339,10 @@ router.post('/auth/refresh', async (req, res) => {
 router.get('/auth/me', requireAuth, async (req, res) => {
   try {
     const user = await db.getUserById(req.user!.user_id);
-    if (!user || !user.is_active) {
+    if (!user || !user.is_active || user.deleted_at) {
       return res.status(401).json({ error: 'Session invalid' });
     }
-    res.json({ user_info: toUserInfo(user), company_id: user.company_id });
+    res.json({ user_info: toUserInfo(user), company_id: user.company_id, company: await toCompanyInfo(user.company_id) });
   } catch (error) {
     console.error('Me error:', error);
     res.status(500).json({ error: 'Failed to load session' });

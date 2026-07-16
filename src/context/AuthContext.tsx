@@ -8,13 +8,21 @@ interface UserInfo {
   role: string;
 }
 
+interface CompanyInfo {
+  id: number;
+  name: string;
+  logo_url: string | null;
+  plan: string;
+}
+
 interface AuthContextValue {
   user: UserInfo | null;
   companyId: number;
+  company: CompanyInfo | null;
   role: string | null;
   isAuthenticated: boolean;
   loading: boolean;
-  login: (userInfo: UserInfo, companyId: number) => void;
+  login: (userInfo: UserInfo, companyId: number, company?: CompanyInfo | null) => void;
   logout: () => Promise<void>;
   logoutAll: () => Promise<void>;
 }
@@ -27,12 +35,14 @@ const REFRESH_MARGIN_MS = 2 * 60 * 1000; // refresh ~2 min before the access tok
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<UserInfo | null>(null);
   const [companyId, setCompanyId] = useState<number>(1);
+  const [company, setCompany] = useState<CompanyInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const clearSession = useCallback(() => {
     setUser(null);
     setCompanyId(1);
+    setCompany(null);
     if (refreshTimer.current) {
       clearTimeout(refreshTimer.current);
       refreshTimer.current = null;
@@ -44,6 +54,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!data) return false;
     setUser(data.user_info);
     setCompanyId(data.company_id);
+    setCompany(data.company ?? null);
     return true;
   }, []);
 
@@ -76,6 +87,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           if (!cancelled) {
             setUser(data.user_info);
             setCompanyId(data.company_id);
+            setCompany(data.company ?? null);
             scheduleRefresh();
           }
         }
@@ -92,9 +104,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const login = useCallback((userInfo: UserInfo, compId: number) => {
+  const login = useCallback((userInfo: UserInfo, compId: number, comp?: CompanyInfo | null) => {
     setUser(userInfo);
     setCompanyId(compId);
+    setCompany(comp ?? null);
     scheduleRefresh();
   }, [scheduleRefresh]);
 
@@ -119,6 +132,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const value: AuthContextValue = {
     user,
     companyId,
+    company,
     role: user?.role || null,
     isAuthenticated: !!user,
     loading,

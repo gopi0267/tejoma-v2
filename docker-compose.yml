@@ -1,0 +1,189 @@
+name: tejoma
+
+networks:
+  internal:
+    driver: bridge
+
+volumes:
+  ml-models:
+  hf-cache:
+  prometheus-data:
+  grafana-data:
+
+services:
+  # ============================================================================
+  # APPLICATION SERVICES
+  # ============================================================================
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env.local
+    environment:
+      # Overrides for container networking - everything else (DB_PASSWORD, JWT_SECRET,
+      # GEMINI_API_KEY, GMAIL_*, TWILIO_*) is inherited unchanged from .env.local above.
+      NODE_ENV: production
+      DB_HOST: host.docker.internal
+      JD_NLP_SERVICE_URL: http://jd-nlp-service:8008
+      MATCHING_ML_SERVICE_URL: http://matching-ml-service:8009
+    extra_hosts:
+      # Docker Desktop (Windows/Mac) resolves this natively already; explicit for portability
+      # to a Linux server later, where it's needed.
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      jd-nlp-service:
+        condition: service_healthy
+      matching-ml-service:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - internal
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  jd-nlp-service:
+    build:
+      context: ./python-services/jd-nlp-service
+    volumes:
+      # GLiNER's model downloads from HuggingFace on first startup (not baked into the image
+      # like spaCy is) - this volume means that download only happens once, not on every
+      # container recreate.
+      - hf-cache:/home/tejoma/.cache/huggingface
+    restart: unless-stopped
+    networks:
+      - internal
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  matching-ml-service:
+    build:
+      context: ./python-services/matching-ml-service
+    volumes:
+      - ml-models:/app/models
+    restart: unless-stopped
+    networks:
+      - internal
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # ============================================================================
+  # REVERSE PROXY
+  # ============================================================================
+
+  nginx:
+    image: nginx:1.27-alpine
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+      - ./logs/nginx:/var/log/nginx
+    restart: unless-stopped
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/nginx-health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # Uncomment once a real domain points at this server, and swap the cert paths in
+  # nginx/conf.d/tejoma.conf from the self-signed cert to /etc/letsencrypt/live/<domain>/ -
+  # see DEPLOYMENT.md's HTTPS section for the exact one-time command to run this against.
+  # certbot:
+  #   image: certbot/certbot:latest
+  #   volumes:
+  #     - ./nginx/certbot/conf:/etc/letsencrypt
+  #     - ./nginx/certbot/www:/var/www/certbot
+  #   entrypoint: >
+  #     sh -c "trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done"
+
+  # ============================================================================
+  # MONITORING
+  # ============================================================================
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+    networks:
+      - internal
+
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-changeme_on_first_login}
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+    networks:
+      - internal
+    depends_on:
+      - prometheus
+
+  node-exporter:
+    image: prom/node-exporter:latest
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--path.rootfs=/rootfs'
+    restart: unless-stopped
+    networks:
+      - internal
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    volumes:
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+    restart: unless-stopped
+    networks:
+      - internal
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:latest
+    # DB_USER/DB_PASSWORD/DB_PORT/DB_NAME here are resolved by Compose itself at parse time from
+    # a root .env file (NOT from env_file:, which only injects into a running container) - copy
+    # .env.local to .env once (see DEPLOYMENT.md) so these resolve correctly.
+    environment:
+      DATA_SOURCE_NAME: "postgresql://${DB_USER}:${DB_PASSWORD}@host.docker.internal:${DB_PORT}/${DB_NAME}?sslmode=disable"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    networks:
+      - internal

@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { Job, Candidate } from '../types.js';
 import { apiFetch } from '../utils/apiFetch.js';
+import { useResponsiveBreakpoint } from '../hooks/useResponsiveBreakpoint.js';
 
 interface JobManagementProps {
   jobs: Job[];
@@ -36,12 +37,7 @@ export default function JobManagement({
   const [toastType, setToastType] = useState<'select' | 'reject'>('reject');
 
   // Responsive state
-  const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' ? window.innerWidth < 768 : false);
-  useEffect(() => {
-    const handleResize = () => setIsMobile(window.innerWidth < 768);
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
+  const { isMobile } = useResponsiveBreakpoint();
 
   // Selected job candidate matches list
   const [activeJobDetails, setActiveJobDetails] = useState<Job | null>(null);
@@ -277,13 +273,13 @@ export default function JobManagement({
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Search by position title..."
-                className="w-full bg-white border border-slate-200 rounded-xl py-2 pl-9 pr-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-emerald-500 shadow-xs"
+                className="w-full bg-white border border-slate-200 rounded-xl py-2 pl-9 pr-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 shadow-xs"
               />
             </div>
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
-              className="bg-white border border-slate-200 text-slate-700 rounded-xl px-3 py-2 focus:outline-none focus:border-emerald-500 shadow-xs"
+              className="bg-white border border-slate-200 text-slate-700 rounded-xl px-3 py-2 focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 shadow-xs"
             >
               <option value="all">All statuses</option>
               <option value="open">Open</option>
@@ -326,13 +322,15 @@ export default function JobManagement({
                       <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
                         <button
                           onClick={() => handleEditInit(j)}
-                          className="bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 font-bold px-2.5 py-1 rounded-lg text-[10px] cursor-pointer"
+                          aria-label={`Edit ${j.title}`}
+                          className="bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 font-bold px-2.5 py-1 min-h-[44px] rounded-lg text-[10px] cursor-pointer"
                         >
                           Edit
                         </button>
                         <button
                           onClick={() => handleDeleteJob(j.id)}
-                          className="bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-600 font-bold px-2.5 py-1 rounded-lg text-[10px] cursor-pointer"
+                          aria-label={`Delete ${j.title}`}
+                          className="bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-600 font-bold px-2.5 py-1 min-h-[44px] rounded-lg text-[10px] cursor-pointer"
                         >
                           Delete
                         </button>
@@ -385,15 +383,17 @@ export default function JobManagement({
                           <div className="flex justify-end gap-2.5">
                             <button
                               onClick={() => handleEditInit(j)}
-                              className="text-slate-400 hover:text-slate-700 p-1 rounded transition-colors cursor-pointer"
+                              className="text-slate-400 hover:text-slate-700 min-w-[44px] min-h-[44px] flex items-center justify-center rounded transition-colors cursor-pointer"
                               title="Edit Position"
+                              aria-label={`Edit ${j.title}`}
                             >
                               <Edit2 className="w-3.5 h-3.5" />
                             </button>
                             <button
                               onClick={() => handleDeleteJob(j.id)}
-                              className="text-slate-400 hover:text-rose-600 p-1 rounded transition-colors cursor-pointer"
+                              className="text-slate-400 hover:text-rose-600 min-w-[44px] min-h-[44px] flex items-center justify-center rounded transition-colors cursor-pointer"
                               title="Delete Position"
+                              aria-label={`Delete ${j.title}`}
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
@@ -535,8 +535,9 @@ export default function JobManagement({
               <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
                 <h3 className="text-sm font-bold text-slate-900">Modify Job Position Details</h3>
                 <button 
-                  onClick={() => setEditingJob(null)} 
-                  className="text-slate-500 hover:text-slate-900 border border-slate-200 p-1 rounded-lg bg-white transition-colors cursor-pointer"
+                  onClick={() => setEditingJob(null)}
+                  aria-label="Close"
+                  className="text-slate-500 hover:text-slate-900 border border-slate-200 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg bg-white transition-colors cursor-pointer"
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -550,7 +551,7 @@ export default function JobManagement({
                     required
                     value={editTitle}
                     onChange={(e) => setEditTitle(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg py-1.5 px-3 text-slate-800 focus:outline-none focus:border-emerald-500"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg py-1.5 px-3 text-slate-800 focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20"
                   />
                 </div>
 
@@ -562,7 +563,7 @@ export default function JobManagement({
                     value={editSkills}
                     onChange={(e) => setEditSkills(e.target.value)}
                     placeholder="React, TypeScript, Jest"
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg py-1.5 px-3 text-slate-800 focus:outline-none focus:border-emerald-500"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg py-1.5 px-3 text-slate-800 focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20"
                   />
                 </div>
 
@@ -574,7 +575,7 @@ export default function JobManagement({
                       required
                       value={editExp}
                       onChange={(e) => setEditExp(parseInt(e.target.value) || 0)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg py-1.5 px-3 text-slate-800 focus:outline-none focus:border-emerald-500"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg py-1.5 px-3 text-slate-800 focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20"
                     />
                   </div>
                   <div>
@@ -584,7 +585,7 @@ export default function JobManagement({
                       required
                       value={editLocation}
                       onChange={(e) => setEditLocation(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg py-1.5 px-3 text-slate-800 focus:outline-none focus:border-emerald-500"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg py-1.5 px-3 text-slate-800 focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20"
                     />
                   </div>
                 </div>
@@ -597,7 +598,7 @@ export default function JobManagement({
                       required
                       value={editSalMin}
                       onChange={(e) => setEditSalMin(parseInt(e.target.value) || 0)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg py-1.5 px-3 text-slate-800 focus:outline-none focus:border-emerald-500"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg py-1.5 px-3 text-slate-800 focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20"
                     />
                   </div>
                   <div>
@@ -607,7 +608,7 @@ export default function JobManagement({
                       required
                       value={editSalMax}
                       onChange={(e) => setEditSalMax(parseInt(e.target.value) || 0)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg py-1.5 px-3 text-slate-800 focus:outline-none focus:border-emerald-500"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg py-1.5 px-3 text-slate-800 focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20"
                     />
                   </div>
                 </div>
@@ -617,7 +618,7 @@ export default function JobManagement({
                   <select
                     value={editStatus}
                     onChange={(e) => setEditStatus(e.target.value as any)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg py-1.5 px-3 text-slate-800 focus:outline-none focus:border-emerald-500"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg py-1.5 px-3 text-slate-800 focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20"
                   >
                     <option value="open">Open</option>
                     <option value="on_hold">On Hold</option>
@@ -632,7 +633,7 @@ export default function JobManagement({
                     value={editDesc}
                     onChange={(e) => setEditDesc(e.target.value)}
                     rows={4}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg py-1.5 px-3 text-slate-800 focus:outline-none focus:border-emerald-500"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg py-1.5 px-3 text-slate-800 focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20"
                   />
                 </div>
 

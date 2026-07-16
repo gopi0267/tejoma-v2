@@ -27,3 +27,10 @@ python-services/matching-ml-service/models/
 __pycache__/
 *.pyc
 python-services/**/.venv/
+
+# TLS certs (self-signed dev certs and any real certbot output) - regenerable, never committed
+nginx/certs/
+nginx/certbot/
+
+# Nginx/app log volumes
+logs/

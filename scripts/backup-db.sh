@@ -46,9 +46,25 @@ mkdir -p "$BACKUP_DIR"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 OUT_FILE="$BACKUP_DIR/${DB_NAME}_${TIMESTAMP}.sql.gz"
 
+# pg_dump isn't always on PATH on Windows installs (the installer doesn't add it by default) -
+# fall back to the most common install locations before giving up.
+PG_DUMP_BIN="pg_dump"
+if ! command -v pg_dump >/dev/null 2>&1; then
+  for candidate in /c/Program\ Files/PostgreSQL/*/bin/pg_dump.exe; do
+    if [ -f "$candidate" ]; then
+      PG_DUMP_BIN="$candidate"
+      break
+    fi
+  done
+  if [ "$PG_DUMP_BIN" = "pg_dump" ]; then
+    echo "ERROR: pg_dump not found on PATH or in a standard Windows PostgreSQL install location." >&2
+    exit 1
+  fi
+fi
+
 echo "Backing up $DB_NAME @ $DB_HOST:$DB_PORT -> $OUT_FILE"
 
-PGPASSWORD="$DB_PASSWORD" pg_dump \
+PGPASSWORD="$DB_PASSWORD" "$PG_DUMP_BIN" \
   --host="$DB_HOST" \
   --port="$DB_PORT" \
   --username="$DB_USER" \

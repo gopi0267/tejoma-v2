@@ -10,20 +10,29 @@ const router = Router();
 router.use(requireAuth, requireRole('recruiter', 'admin'));
 
 router.get('/jobs', async (req, res) => {
-    const jobs = await db.getJobs();
-    const swipes = await db.getSwipes();
-    const candidates = await db.getCandidates();
-  
+    const companyId = req.user!.company_id;
+    // SQL-aggregated (one GROUP BY query for every job's counts, one COUNT for the candidate
+    // pool size) instead of pulling the full swipes/candidates tables into Node and filtering
+    // per job in JS - same production pattern as the Analytics Hub aggregation helpers.
+    const [jobs, swipeCounts, totalCandidates] = await Promise.all([
+      db.getJobs(companyId),
+      db.getJobSwipeCounts(companyId),
+      db.countCandidates(companyId),
+    ]);
+
     const enrichedJobs = jobs.map(j => {
-      const jobSwipes = swipes.filter(s => s.job_id === j.id);
+      const counts = swipeCounts.get(j.id) ?? { reviewed: 0, accepted: 0, rejected: 0, saved: 0 };
       return {
         ...j,
-        total_candidates: candidates.length,
-        reviewed: jobSwipes.length,
-        accepted: jobSwipes.filter(s => s.action === 1).length
+        total_candidates: totalCandidates,
+        reviewed: counts.reviewed,
+        accepted: counts.accepted,
+        rejected: counts.rejected,
+        saved: counts.saved,
+        acceptance_rate: counts.reviewed > 0 ? Number(((counts.accepted / counts.reviewed) * 100).toFixed(1)) : 0,
       };
     });
-  
+
     res.json(enrichedJobs);
 });
   
@@ -49,7 +58,7 @@ router.post('/jobs', async (req, res) => {
       }
 
       const newJob = await db.createJob({
-        company_id: 1,
+        company_id: req.user!.company_id,
         title,
         description,
         required_skills: toStringArray(required_skills),
@@ -93,14 +102,14 @@ router.post('/jobs', async (req, res) => {
 });
   
 router.get('/jobs/:id', async (req, res) => {
+    const companyId = req.user!.company_id;
     const id = parseInt(req.params.id);
-    const jobs = await db.getJobs();
-    const job = jobs.find(j => j.id === id);
+    const job = await db.getJobById(id, companyId);
     if (!job) {
       return res.status(404).json({ error: 'Job not found' });
     }
-  
-    const candidates = await db.getCandidates();
+
+    const candidates = await db.getCandidates(companyId);
     // Batched: one round-trip to the ML ensemble for the whole candidate pool, not one per
     // candidate - matters once there are more than a handful of candidates to score.
     const scores = await calculateMatchScoresBatch(job, candidates, { skipGeminiSummary: true });
@@ -129,8 +138,8 @@ router.delete('/jobs/:id', async (req, res) => {
       }
   
       console.log(`🗑️ Deleting job ID: ${id}`);
-  
-      const deleted = await db.deleteJob(id);
+
+      const deleted = await db.deleteJob(id, req.user!.company_id);
   
       if (!deleted) {
         return res.status(404).json({ error: 'Job not found or could not be deleted' });

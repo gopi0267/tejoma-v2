@@ -1,20 +1,30 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# Tejoma - AI Recruitment Platform
 
-# Run and deploy your AI Studio app
-
-This contains everything you need to run your app locally.
-
-View your app in AI Studio: https://ai.studio/apps/be4650dc-141a-43e4-9047-ff9297a4e4bb
+React 19 + Vite frontend, Node/Express backend, PostgreSQL, and two Python FastAPI microservices
+(JD parsing NLP, matching ML ensemble), with Google Gemini for resume parsing, JD-parser NLP
+fallback fields, and a RAG chatbot.
 
 ## Run Locally
 
-**Prerequisites:**  Node.js
+**Prerequisites:** Node.js 20+, Python 3.11+, PostgreSQL 14+ running locally.
 
+1. Install Node dependencies: `npm install`
+2. Set up both Python microservices (each in its own virtualenv):
+   ```bash
+   cd python-services/jd-nlp-service && pip install -r requirements.txt && python -m spacy download en_core_web_sm
+   cd python-services/matching-ml-service && pip install -r requirements.txt
+   ```
+3. Copy `.env.example` to `.env.local` and fill in real values (DB credentials, `GEMINI_API_KEY`,
+   `JWT_SECRET`, etc. - see `.env.example` for what each one does).
+4. Start all three processes (separate terminals):
+   ```bash
+   npm run dev                                                        # Node app, :3006
+   cd python-services/jd-nlp-service && uvicorn main:app --port 8008   # JD-NLP service
+   cd python-services/matching-ml-service && uvicorn main:app --port 8009  # Matching-ML service
+   ```
+5. Open `http://localhost:3006`.
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+## Production Deployment
+
+Docker Compose + Nginx (TLS, reverse proxy) + Prometheus/Grafana monitoring - see
+**[DEPLOYMENT.md](DEPLOYMENT.md)** for the full guide.

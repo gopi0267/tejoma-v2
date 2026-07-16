@@ -120,9 +120,9 @@ export default function ChatbotWidget() {
         </button>
       )}
 
-      {/* Chat panel */}
+      {/* Chat panel - full-screen sheet below sm: (640px), anchored 380x560 panel at sm: and up */}
       {open && (
-        <div className="fixed bottom-20 right-6 z-40 w-[380px] max-w-[calc(100vw-2rem)] h-[560px] max-h-[calc(100vh-5rem)] bg-white rounded-2xl shadow-2xl border border-[#E0E0E0] flex flex-col overflow-hidden">
+        <div className="fixed inset-0 sm:inset-auto sm:bottom-20 sm:right-6 z-40 w-full sm:w-[380px] sm:max-w-[calc(100vw-2rem)] h-[100dvh] sm:h-[560px] sm:max-h-[calc(100dvh-5rem)] bg-white sm:rounded-2xl shadow-2xl border-0 sm:border sm:border-[#E0E0E0] flex flex-col overflow-hidden">
 
           {/* Header */}
           <div className="flex items-center justify-between gap-3 px-4 py-3 bg-[#1A1A1A] flex-shrink-0">
@@ -135,7 +135,7 @@ export default function ChatbotWidget() {
                 </p>
               </div>
             </div>
-            <button onClick={() => setOpen(false)} className="p-1.5 hover:bg-white/10 rounded-lg text-white cursor-pointer flex-shrink-0" aria-label="Close chat">
+            <button onClick={() => setOpen(false)} className="min-w-[44px] min-h-[44px] flex items-center justify-center hover:bg-white/10 rounded-lg text-white cursor-pointer flex-shrink-0" aria-label="Close chat">
               <X className="w-4 h-4" />
             </button>
           </div>
@@ -176,8 +176,13 @@ export default function ChatbotWidget() {
             <div ref={messagesEndRef} />
           </div>
 
-          {/* Input */}
-          <form onSubmit={handleSend} className="flex items-center gap-2 p-3 border-t border-[#E0E0E0] bg-white flex-shrink-0">
+          {/* Input - bottom padding includes the safe-area inset so it isn't obscured on
+              notched phones when the panel is a full-screen sheet */}
+          <form
+            onSubmit={handleSend}
+            className="flex items-center gap-2 p-3 border-t border-[#E0E0E0] bg-white flex-shrink-0"
+            style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom))' }}
+          >
             <input
               type="text"
               value={input}
@@ -189,7 +194,7 @@ export default function ChatbotWidget() {
             <button
               type="submit"
               disabled={loading || !input.trim()}
-              className="w-10 h-10 rounded-full bg-[#2962FF] hover:bg-[#1E4FD9] disabled:bg-[#CCCCCC] text-white flex items-center justify-center flex-shrink-0 cursor-pointer transition-colors"
+              className="w-11 h-11 rounded-full bg-[#2962FF] hover:bg-[#1E4FD9] disabled:bg-[#CCCCCC] text-white flex items-center justify-center flex-shrink-0 cursor-pointer transition-colors"
               aria-label="Send message"
             >
               <Send className="w-4 h-4" />

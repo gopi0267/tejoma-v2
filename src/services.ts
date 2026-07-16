@@ -283,14 +283,15 @@ export async function calculateMatchScore(job: Job, candidate: Candidate, option
 
 export async function trainModelOnStartup(): Promise<void> {
   try {
-    const swipes = await db.getSwipes();
+    // Training is pooled across every company - see db.getAllSwipesUnscoped's comment.
+    const swipes = await db.getAllSwipesUnscoped();
     if (swipes.length === 0) {
       logger.warn('No swipes available for ML training.');
       return;
     }
 
-    const candidates = await db.getCandidates();
-    const jobs = await db.getJobs();
+    const candidates = await db.getAllCandidatesUnscoped();
+    const jobs = await db.getAllJobsUnscoped();
 
     const samples: TrainSample[] = [];
     for (const swipe of swipes) {

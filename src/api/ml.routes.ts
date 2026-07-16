@@ -56,7 +56,9 @@ router.post('/ml/train', requireRole('admin'), async (req, res) => {
 });
 
 router.get('/ml/model/status', requireRole('recruiter', 'admin'), async (req, res) => {
-    const [health, swipes] = await Promise.all([getEnsembleHealth(), db.getSwipes()]);
+    // Swipe count reflects the pooled cross-company training set the ensemble actually trains
+    // on (see db.getAllSwipesUnscoped), consistent with trained_sample_count above.
+    const [health, swipes] = await Promise.all([getEnsembleHealth(), db.getAllSwipesUnscoped()]);
     res.json({
       ensemble_trained: health?.ensembleTrained ?? false,
       trained_sample_count: health?.trainedSampleCount ?? 0,

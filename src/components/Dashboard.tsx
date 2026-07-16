@@ -4,11 +4,12 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { 
-  PlusCircle, Sparkles, TrendingUp, Users, CheckSquare, Clock, ArrowRight, Activity 
+import {
+  PlusCircle, Sparkles, TrendingUp, Users, CheckSquare, Clock, ArrowRight, Activity, LogOut
 } from 'lucide-react';
 import { Job, DashboardStats } from '../types.js';
 import { apiFetch } from '../utils/apiFetch.js';
+import { useAuth } from '../context/AuthContext.js';
 
 interface DashboardProps {
   setActiveTab: (tab: string) => void;
@@ -17,12 +18,18 @@ interface DashboardProps {
 }
 
 export default function Dashboard({ setActiveTab, setSelectedJobId, onOpenCreateJobModal }: DashboardProps) {
+  const { logout } = useAuth();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     fetchDashboardData();
+    // Auto-refresh so the page reflects new swipes without a manual reload - same pattern
+    // already shipped in Analytics.tsx (polls the already company-scoped endpoint rather than
+    // subscribing to the app's global, non-tenant-scoped SSE broadcast).
+    const interval = setInterval(fetchDashboardData, 30000);
+    return () => clearInterval(interval);
   }, []);
 
   const fetchDashboardData = async () => {
@@ -79,7 +86,7 @@ export default function Dashboard({ setActiveTab, setSelectedJobId, onOpenCreate
           <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Recruiting Command Center</h1>
           <p className="text-xs text-slate-500 mt-1">Real-time matching efficiency and model analytics for Tejoma Corp.</p>
         </div>
-        <div className="flex gap-3">
+        <div className="flex items-center gap-3">
           <button
             onClick={onOpenCreateJobModal}
             className="bg-white border border-slate-200 hover:bg-slate-50 hover:border-slate-300 text-slate-700 px-4 py-2 rounded-xl text-xs font-semibold transition-all flex items-center gap-2 cursor-pointer shadow-xs"
@@ -91,6 +98,14 @@ export default function Dashboard({ setActiveTab, setSelectedJobId, onOpenCreate
             className="bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-semibold transition-all flex items-center gap-2 cursor-pointer shadow-xs"
           >
             <Sparkles className="w-4 h-4 text-white animate-pulse" /> Launch Matcher
+          </button>
+          <button
+            onClick={logout}
+            aria-label="Terminate session"
+            title="Terminate Session"
+            className="text-slate-400 hover:text-rose-600 transition-colors cursor-pointer p-2"
+          >
+            <LogOut className="w-5 h-5" />
           </button>
         </div>
       </div>
@@ -104,7 +119,10 @@ export default function Dashboard({ setActiveTab, setSelectedJobId, onOpenCreate
             <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Swipes Today</span>
             <p className="text-2xl font-bold text-slate-900 font-mono">{stats.totalSwipesToday || 0}</p>
             <span className="text-[9px] text-emerald-600 flex items-center gap-1">
-              <TrendingUp className="w-3 h-3" /> +14.5% versus yesterday
+              <TrendingUp className="w-3 h-3" />
+              {stats.swipesTodayChangePct != null
+                ? `${stats.swipesTodayChangePct > 0 ? '+' : ''}${stats.swipesTodayChangePct}% versus yesterday`
+                : 'No comparison data yet'}
             </span>
           </div>
           <div className="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center border border-emerald-100">
@@ -132,7 +150,7 @@ export default function Dashboard({ setActiveTab, setSelectedJobId, onOpenCreate
             <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Total Reviewed</span>
             <p className="text-2xl font-bold text-slate-900 font-mono">{stats.totalCandidatesReviewed || 0}</p>
             <span className="text-[9px] text-indigo-600 flex items-center gap-1">
-              Model accuracy: 84.5%
+              Model accuracy: {stats.modelAccuracy != null ? `${stats.modelAccuracy}%` : 'N/A'}
             </span>
           </div>
           <div className="w-12 h-12 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center border border-indigo-100">
@@ -170,7 +188,7 @@ export default function Dashboard({ setActiveTab, setSelectedJobId, onOpenCreate
                 <p className="text-[10px] text-slate-500 mt-0.5">7-day tracking metric of total candidate swipes.</p>
               </div>
               <span className="text-[9px] font-mono text-emerald-600 bg-emerald-50 border border-emerald-100 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider">
-                LIVE TELEMETRY
+                AUTO REFRESH 30S
               </span>
             </div>
 

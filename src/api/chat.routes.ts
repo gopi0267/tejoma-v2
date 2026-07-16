@@ -48,8 +48,8 @@ router.post('/chat', async (req, res) => {
 
     const [chunks, candidates, jobs] = await Promise.all([
       retrieveRelevantChunks(message, companyId),
-      db.getCandidates(),
-      db.getJobsByCompanyId(companyId),
+      db.getCandidates(companyId),
+      db.getJobs(companyId),
     ]);
 
     const retrievedContext = chunks

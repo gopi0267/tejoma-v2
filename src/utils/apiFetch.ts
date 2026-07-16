@@ -12,6 +12,7 @@
 interface RefreshResult {
   user_info: { id: number; name: string; email: string; role: string };
   company_id: number;
+  company: { id: number; name: string; logo_url: string | null; plan: string } | null;
 }
 
 let refreshPromise: Promise<RefreshResult | null> | null = null;

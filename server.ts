@@ -15,9 +15,14 @@ import { clients } from './src/realtime.js';
 import { logger } from './src/utils/logger.js';
 import { globalLimiter, authLimiter } from './src/middleware/rateLimit.middleware.js';
 import { errorHandler } from './src/middleware/error.middleware.js';
+import { registry, metricsMiddleware } from './src/utils/metrics.js';
+import { db } from './src/db.js';
 
 const app = express();
 const PORT = 3006;
+
+// Belt-and-suspenders on top of Helmet's default hidePoweredBy - makes the intent explicit.
+app.disable('x-powered-by');
 
 if (IS_PRODUCTION) {
   // Trust the first hop's X-Forwarded-* headers (reverse proxy / load balancer). Needed for
@@ -46,8 +51,15 @@ app.use(helmet({
     : false,
 }));
 
+// FRONTEND_URL supports a comma-separated list (e.g. an apex + www domain in production) -
+// defaults to today's single-origin behavior when only one value is set.
+const allowedOrigins = (process.env.FRONTEND_URL || 'http://localhost:3006')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:3006',
+  origin: allowedOrigins.length > 1 ? allowedOrigins : allowedOrigins[0],
   credentials: true,
 }));
 
@@ -65,8 +77,17 @@ app.use(pinoHttp({
 app.use(express.json({ limit: '10mb' }));
 app.use(cookieParser());
 
+app.use(metricsMiddleware);
+
 app.use('/api', globalLimiter);
 app.use('/api/auth', authLimiter);
+
+// Unauthenticated by Prometheus convention - scraped by the prometheus service over the
+// internal Docker network only, never routed through Nginx to the public internet.
+app.get('/api/metrics', async (_req, res) => {
+  res.setHeader('Content-Type', registry.contentType);
+  res.send(await registry.metrics());
+});
 
 app.get('/api/realtime/stream', (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
@@ -118,9 +139,27 @@ async function startServer() {
   // Must be registered last so it can catch errors from every layer above it.
   app.use(errorHandler);
 
-  app.listen(PORT, '0.0.0.0', () => {
+  const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`✅ Server running on http://localhost:${PORT}`);
   });
+
+  // Lets in-flight requests finish and closes the DB pool cleanly on container stop/restart,
+  // instead of connections being dropped mid-request.
+  let shuttingDown = false;
+  const shutdown = (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`${signal} received, shutting down gracefully...`);
+    server.close(async () => {
+      await db.closeConnection();
+      console.log('Shutdown complete.');
+      process.exit(0);
+    });
+    // Force-exit if connections haven't drained within 10s.
+    setTimeout(() => process.exit(1), 10000).unref();
+  };
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
 }
 
 startServer();

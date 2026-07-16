@@ -15,6 +15,9 @@ import SwipeInterface from './components/SwipeInterface.js';
 import JobManagement from './components/JobManagement.js';
 import CandidateManagement from './components/CandidateManagement.js';
 import Analytics from './components/Analytics.js';
+import RecruiterReview from './components/RecruiterReview.js';
+import UserManagement from './components/UserManagement.js';
+import TenantRequests from './components/TenantRequests.js';
 import TejomaLogo from './components/TejomaLogo.js';
 import { Job, Candidate } from './types.js';
 import ResumeUploadPage from './components/ResumeUploadPage.js';
@@ -27,7 +30,7 @@ export default function App() {
   // Authentication state now lives in AuthContext (see src/context/AuthContext.tsx) - it
   // bootstraps from the httpOnly session cookie via /api/auth/me rather than localStorage,
   // since the cookie itself isn't readable by frontend JS.
-  const { user: userInfo, companyId, isAuthenticated, loading: authLoading, logout, logoutAll } = useAuth();
+  const { user: userInfo, companyId, company, isAuthenticated, loading: authLoading, logout, logoutAll } = useAuth();
 
   // Core navigation & selection states
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -251,6 +254,7 @@ export default function App() {
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         userInfo={userInfo}
+        company={company}
         onLogout={logout}
         onLogoutAll={logoutAll}
         isOpen={isSidebarOpen}
@@ -262,9 +266,10 @@ export default function App() {
         {/* Mobile Header Bar */}
         {activeTab !== 'swipe' && (
           <header className="flex md:hidden items-center justify-between px-4 py-3 bg-white border-b border-slate-200 h-14 w-full z-40">
-            <button 
+            <button
               onClick={() => setIsSidebarOpen(true)}
-              className="text-slate-600 hover:text-slate-900 border border-slate-200 p-1.5 rounded-lg bg-slate-50 transition-colors cursor-pointer"
+              aria-label="Open navigation menu"
+              className="text-slate-600 hover:text-slate-900 border border-slate-200 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg bg-slate-50 transition-colors cursor-pointer"
             >
               <Menu className="w-5 h-5" />
             </button>
@@ -290,14 +295,18 @@ export default function App() {
             />
           )}
           {activeTab === 'swipe' && (
-            <SwipeInterface 
-              jobs={jobs} 
-              selectedJobId={selectedJobId} 
-              setSelectedJobId={setSelectedJobId} 
+            <SwipeInterface
+              jobs={jobs}
+              selectedJobId={selectedJobId}
+              setSelectedJobId={setSelectedJobId}
               setActiveTab={setActiveTab}
               onLogout={logout}
               userInfo={userInfo}
+              onOpenSidebar={() => setIsSidebarOpen(true)}
             />
+          )}
+          {activeTab === 'recruiter-review' && (
+            <RecruiterReview />
           )}
           {activeTab === 'jobs' && (
             <JobManagement 
@@ -316,6 +325,12 @@ export default function App() {
           )}
           {activeTab === 'analytics' && (
             <Analytics />
+          )}
+          {activeTab === 'user-management' && (
+            <UserManagement />
+          )}
+          {activeTab === 'tenant-requests' && (
+            <TenantRequests />
           )}
           {activeTab === 'resume-upload' && (
             <ResumeUploadPage 

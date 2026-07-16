@@ -7,163 +7,115 @@ const router = Router();
 // since Dashboard.tsx/Analytics.tsx/JobManagement.tsx are used by regular recruiters today.
 router.use(requireAuth, requireRole('recruiter', 'admin'));
 
+// GET /api/analytics/dashboard - response shape (including the duplicate snake_case/camelCase
+// fields) is also consumed by Dashboard.tsx and SwipeInterface.tsx, so it's preserved exactly;
+// only the underlying computation moved from JS reduction over full tables to SQL aggregation
+// (see db.getAnalyticsDashboardStats/getAnalyticsTrend/getAnalyticsRecentActivity).
 router.get('/analytics/dashboard', async (req, res) => {
-    try {
-      const swipes = await db.getSwipes();
-      const candidates = await db.getCandidates();
-      const jobs = await db.getJobs();
-  
-      const total_reviewed = swipes.length;
-      const matches_made = swipes.filter(s => s.action === 1).length;
-      const avg_score = total_reviewed > 0 
-        ? Number((swipes.reduce((acc, s) => acc + s.match_score, 0) / total_reviewed).toFixed(1)) 
-        : 0;
-      
-      const acceptance_rate = total_reviewed > 0 
-        ? Number(((matches_made / total_reviewed) * 100).toFixed(1)) 
-        : 0;
-  
-      const dateMap: Record<string, number> = {};
-      for (let i = 6; i >= 0; i--) {
-        const d = new Date();
-        d.setDate(d.getDate() - i);
-        const dateStr = d.toISOString().split('T')[0];
-        dateMap[dateStr] = 0;
-      }
-  
-      swipes.forEach(s => {
-        const dateStr = typeof s.timestamp === 'string' 
-          ? s.timestamp.split('T')[0] 
-          : new Date(s.timestamp).toISOString().split('T')[0];
-        if (dateMap[dateStr] !== undefined) {
-          dateMap[dateStr]++;
-        }
-      });
-  
-      const trends = Object.keys(dateMap).map(date => ({
-        date,
-        swipes: dateMap[date]
-      }));
-  
-      const recentActivities = swipes.slice(-5).map(s => {
-        const candidate = candidates.find(c => c.id === s.candidate_id);
-        const job = jobs.find(j => j.id === s.job_id);
-        return {
-          id: s.id,
-          recruiterName: 'Razi M',
-          candidateName: candidate ? candidate.name : 'Candidate',
-          jobTitle: job ? job.title : 'Job',
-          action: s.action === 1 ? 'accept' : s.action === 0.5 ? 'save' : 'reject',
-          timestamp: s.timestamp
-        };
-      }).reverse();
-  
-      const todayStr = new Date().toISOString().split('T')[0];
-      const totalSwipesToday = swipes.filter(s => {
-    const tsStr = typeof s.timestamp === 'string' ? s.timestamp : new Date(s.timestamp).toISOString();
-    return tsStr.startsWith(todayStr);
-  }).length;
-  
-      const openJobs = jobs.filter(j => j.status === 'open');
-      let pendingCandidates = 0;
-      if (openJobs.length > 0) {
-        openJobs.forEach(job => {
-          const swipedCandidateIds = new Set(swipes.filter(s => s.job_id === job.id).map(s => s.candidate_id));
-          pendingCandidates += candidates.filter(c => !swipedCandidateIds.has(c.id)).length;
-        });
-      } else {
-        pendingCandidates = candidates.length;
-      }
-  
-      res.json({
-        total_reviewed,
-        matches_made,
-        avg_score,
-        acceptance_rate,
-        trends,
-        recent_activity: recentActivities,
-        totalSwipesToday,
-        acceptanceRate: acceptance_rate,
-        totalCandidatesReviewed: total_reviewed,
-        pendingCandidates,
-        swipesTrend: trends,
-        recentActivity: recentActivities
-      });
-    } catch (error: any) {
-      console.error('Dashboard error:', error);
-      res.status(500).json({ error: 'Failed to load dashboard: ' + error.message });
-    }
-});
-  
-router.get('/analytics/job/:job_id', async (req, res) => {
-    const job_id = parseInt(req.params.job_id);
-    const swipes = (await db.getSwipes()).filter(s => s.job_id === job_id);
-    const candidates = await db.getCandidates();
-  
-    const total_reviewed = swipes.length;
-    const accepted = swipes.filter(s => s.action === 1).length;
-    const acceptance_rate = total_reviewed > 0 ? Number(((accepted / total_reviewed) * 100).toFixed(1)) : 0;
-  
-    const skillCount: Record<string, number> = {};
-    swipes.filter(s => s.action === 1).forEach(s => {
-      const candidate = candidates.find(c => c.id === s.candidate_id);
-      if (candidate) {
-        const skillsArray = typeof candidate.skills === 'string'
-          ? candidate.skills.split(',').map(s => s.trim()).filter(s => s && s.toLowerCase() !== 'null')
-          : (Array.isArray(candidate.skills) ? candidate.skills : []);
-        skillsArray.forEach(skill => {
-          skillCount[skill] = (skillCount[skill] || 0) + 1;
-        });
-      }
-    });
-  
-    const skillDistribution = Object.keys(skillCount).map(name => ({
-      name,
-      value: skillCount[name]
-    })).sort((a, b) => b.value - a.value).slice(0, 5);
-  
-    res.json({ total_reviewed, acceptance_rate, skillDistribution });
-});
-  
-router.get('/analytics/recruiter/:recruiter_id', async (req, res) => {
-    const r_id = parseInt(req.params.recruiter_id);
-    const swipes = (await db.getSwipes()).filter(s => s.recruiter_id === r_id);
-  
-    const swipesCount = swipes.length;
-    const accepted = swipes.filter(s => s.action === 1).length;
-    const acceptanceRate = swipesCount > 0 ? Number(((accepted / swipesCount) * 100).toFixed(1)) : 0;
-    const averageMatchScore = swipesCount > 0 ? Number((swipes.reduce((acc, s) => acc + s.match_score, 0) / swipesCount).toFixed(1)) : 0;
-  
+  try {
+    const companyId = req.user!.company_id;
+
+    const [stats, trends, recentActivity] = await Promise.all([
+      db.getAnalyticsDashboardStats(companyId),
+      db.getAnalyticsTrend(companyId),
+      db.getAnalyticsRecentActivity(companyId, 5),
+    ]);
+
     res.json({
-      id: r_id,
-      name: 'Razi M',
-      email: 'recruiter@tejoma.com',
-      swipesCount,
-      acceptanceRate,
-      averageMatchScore,
-      avgTimeSpentSeconds: 6.4
+      total_reviewed: stats.totalReviewed,
+      matches_made: stats.matchesMade,
+      avg_score: stats.avgScore,
+      acceptance_rate: stats.acceptanceRate,
+      trends,
+      recent_activity: recentActivity,
+      totalSwipesToday: stats.totalSwipesToday,
+      acceptanceRate: stats.acceptanceRate,
+      totalCandidatesReviewed: stats.totalReviewed,
+      pendingCandidates: stats.pendingCandidates,
+      swipesTrend: trends,
+      recentActivity,
+      // Dashboard-only additions - both nullable when there's no real basis to compute them
+      // (see db.getAnalyticsDashboardStats), never a fabricated number.
+      swipesYesterday: stats.swipesYesterday,
+      swipesTodayChangePct: stats.swipesTodayChangePct,
+      modelAccuracy: stats.modelAccuracy,
     });
+  } catch (error: any) {
+    console.error('Dashboard error:', error);
+    res.status(500).json({ error: 'Failed to load dashboard: ' + error.message });
+  }
 });
-  
-router.get('/analytics/skills', async (req, res) => {
-    const candidates = await db.getCandidates();
-    const skillCount: Record<string, number> = {};
-  
-    candidates.forEach(c => {
-      const skillsArray = typeof c.skills === 'string'
-        ? c.skills.split(',').map(s => s.trim()).filter(s => s && s.toLowerCase() !== 'null')
-        : (Array.isArray(c.skills) ? c.skills : []);
-      skillsArray.forEach(skill => {
-        skillCount[skill] = (skillCount[skill] || 0) + 1;
-      });
+
+// GET /api/analytics/job/:job_id - response shape (total_reviewed/acceptance_rate/skillDistribution)
+// consumed by JobManagement.tsx, preserved exactly.
+router.get('/analytics/job/:job_id', async (req, res) => {
+  try {
+    const companyId = req.user!.company_id;
+    const job_id = parseInt(req.params.job_id);
+    if (isNaN(job_id)) {
+      return res.status(400).json({ error: 'Invalid job ID' });
+    }
+
+    const job = await db.getJobById(job_id, companyId);
+    if (!job) {
+      return res.status(404).json({ error: 'Job not found' });
+    }
+
+    const [perJobCounts, skillDistribution] = await Promise.all([
+      db.getJobAnalyticsCounts(job_id, companyId),
+      db.getAnalyticsSkillDistribution(companyId, { jobId: job_id, limit: 5 }),
+    ]);
+
+    res.json({
+      total_reviewed: perJobCounts.totalReviewed,
+      acceptance_rate: perJobCounts.acceptanceRate,
+      skillDistribution,
     });
-  
-    const sortedSkills = Object.keys(skillCount).map(skill => ({
-      skill,
-      count: skillCount[skill]
-    })).sort((a, b) => b.count - a.count).slice(0, 8);
-  
-    res.json(sortedSkills);
+  } catch (error: any) {
+    console.error('Job analytics error:', error);
+    res.status(500).json({ error: 'Failed to load job analytics: ' + error.message });
+  }
+});
+
+// GET /api/analytics/recruiter/me - always the logged-in user's own profile, derived from the
+// session (req.user), never a client-supplied ID. Replaces the old /analytics/recruiter/:recruiter_id
+// (which had no other caller) - that route hardcoded its response regardless of the ID requested,
+// and incidentally let any recruiter view any teammate's individual stats, which was never an
+// intentional feature.
+router.get('/analytics/recruiter/me', async (req, res) => {
+  try {
+    const profile = await db.getAnalyticsRecruiterProfile(req.user!.user_id, req.user!.company_id);
+    if (!profile) {
+      return res.status(404).json({ error: 'Recruiter profile not found' });
+    }
+    res.json({
+      id: profile.id,
+      name: profile.name,
+      email: profile.email,
+      swipesCount: profile.swipesCount,
+      accepted: profile.accepted,
+      rejected: profile.rejected,
+      saved: profile.saved,
+      acceptanceRate: profile.acceptanceRate,
+      averageMatchScore: profile.averageMatchScore,
+      avgTimeSpentSeconds: profile.avgDecisionTimeSeconds, // null -> frontend shows "N/A"
+      lastLoginAt: profile.lastLoginAt,
+      status: profile.isActive ? 'active' : 'disabled',
+    });
+  } catch (error: any) {
+    console.error('Recruiter profile error:', error);
+    res.status(500).json({ error: 'Failed to load recruiter profile: ' + error.message });
+  }
+});
+
+router.get('/analytics/skills', async (req, res) => {
+  try {
+    const skillDistribution = await db.getAnalyticsSkillDistribution(req.user!.company_id, { limit: 8 });
+    res.json(skillDistribution.map((s) => ({ skill: s.name, count: s.value })));
+  } catch (error: any) {
+    console.error('Skills analytics error:', error);
+    res.status(500).json({ error: 'Failed to load skill analytics: ' + error.message });
+  }
 });
 
 export default router;

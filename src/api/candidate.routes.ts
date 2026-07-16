@@ -24,8 +24,9 @@ const toText = (val: any): string => {
   return s.toLowerCase() === 'null' ? '' : s;
 };
 
-function candidatePayloadFromExtracted(cand: Partial<Candidate>): Omit<Candidate, 'id' | 'created_at' | 'updated_at'> {
+function candidatePayloadFromExtracted(cand: Partial<Candidate>, companyId: number): Omit<Candidate, 'id' | 'created_at' | 'updated_at'> {
   return {
+    company_id: companyId,
     name: toText(cand.name),
     email: toText(cand.email),
     phone: toText(cand.phone),
@@ -63,8 +64,8 @@ function candidatePayloadFromExtracted(cand: Partial<Candidate>): Omit<Candidate
   };
 }
 
-router.get('/candidates', async (_req, res) => {
-    const candidates = await db.getCandidates();
+router.get('/candidates', async (req, res) => {
+    const candidates = await db.getCandidates(req.user!.company_id);
     res.json(candidates);
 });
 
@@ -76,7 +77,7 @@ router.post('/candidates', async (req, res) => {
         return res.status(400).json({ error: 'Name and Email are required' });
       }
 
-      const newCandidate = await db.createCandidate(candidatePayloadFromExtracted(req.body));
+      const newCandidate = await db.createCandidate(candidatePayloadFromExtracted(req.body, req.user!.company_id));
       if (newCandidate) {
         indexCandidateInBackground(newCandidate);
         indexCandidateEmbeddingInBackground(newCandidate);
@@ -91,8 +92,7 @@ router.post('/candidates', async (req, res) => {
 
 router.get('/candidates/:id', async (req, res) => {
     const id = parseInt(req.params.id);
-    const candidates = await db.getCandidates();
-    const candidate = candidates.find(c => c.id === id);
+    const candidate = await db.getCandidateById(id, req.user!.company_id);
     if (!candidate) {
       return res.status(404).json({ error: 'Candidate not found' });
     }
@@ -101,7 +101,7 @@ router.get('/candidates/:id', async (req, res) => {
 
 router.delete('/candidates/:id', async (req, res) => {
     const id = parseInt(req.params.id);
-    const deleted = await db.deleteCandidate(id);
+    const deleted = await db.deleteCandidate(id, req.user!.company_id);
     if (!deleted) {
       return res.status(404).json({ error: 'Candidate not found' });
     }
@@ -128,7 +128,7 @@ router.post('/bulk-upload-candidates', async (req, res) => {
             continue;
           }
 
-          const created = await db.createCandidate(candidatePayloadFromExtracted(cand));
+          const created = await db.createCandidate(candidatePayloadFromExtracted(cand, req.user!.company_id));
           if (!created) {
             errors.push({ candidate: cand.email, error: 'Database insert returned no row' });
             continue;
@@ -171,7 +171,7 @@ router.post('/candidates/import', async (req, res) => {
           }
 
           // Create candidate
-          const newCandidate = await db.createCandidate(candidatePayloadFromExtracted(candidate));
+          const newCandidate = await db.createCandidate(candidatePayloadFromExtracted(candidate, req.user!.company_id));
           if (newCandidate) {
             indexCandidateInBackground(newCandidate);
             indexCandidateEmbeddingInBackground(newCandidate);

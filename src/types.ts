@@ -14,6 +14,40 @@ export interface User {
   name: string;
   created_at: string;
   updated_at: string;
+  // User Management audit trail (see migration-user-management.sql) - all null on rows that
+  // predate the feature (signup-created users, whose "creator" is themselves).
+  deleted_at?: string | null;
+  created_by?: number | null;
+  updated_by?: number | null;
+  disabled_by?: number | null;
+  password_reset_by?: number | null;
+  last_login_at?: string | null;
+}
+
+export interface CompanyRegistrationRequest {
+  id: number;
+  company_name: string;
+  company_website: string | null;
+  industry: string | null;
+  company_size: string | null;
+  business_email: string;
+  company_phone: string | null;
+  country: string | null;
+  state: string | null;
+  city: string | null;
+  address: string | null;
+  admin_name: string;
+  admin_email: string;
+  admin_phone: string | null;
+  password_hash: string;
+  status: 'pending' | 'approved' | 'rejected';
+  review_notes: string | null;
+  reviewed_by: number | null;
+  reviewed_at: string | null;
+  resulting_company_id: number | null;
+  resulting_user_id: number | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface Company {
@@ -23,12 +57,16 @@ export interface Company {
   plan: 'starter' | 'pro' | 'enterprise';
   seats_limit: number;
   is_active: boolean;
+  company_slug: string;
+  logo_url: string | null;
+  website: string | null;
   created_at: string;
   updated_at: string;
 }
 
 export interface Candidate {
   id: number;
+  company_id: number;
   name: string;
   email: string;
   phone: string;
@@ -110,6 +148,7 @@ export interface Job {
 
 export interface Swipe {
   id: number;
+  company_id: number;
   recruiter_id: number;
   candidate_id: number;
   job_id: number;
@@ -117,10 +156,30 @@ export interface Swipe {
   match_score: number;
   timestamp: string;
   used_for_training: boolean;
+  // Recruiter Review fields (see migration-recruiter-review.sql) - both null on every swipe
+  // recorded before that migration, and reason stays null on normal (non-decision-change) swipes.
+  reason?: string | null;
+  breakdown?: MatchBreakdown | null;
+  // Decision-timing capture (see migration-analytics-decision-timing.sql) - null on every swipe
+  // recorded before SwipeInterface started sending it, surfaced as "N/A" in Analytics Hub.
+  decision_time_seconds?: number | null;
+}
+
+export interface RecruiterNote {
+  id: number;
+  company_id: number;
+  candidate_id: number;
+  job_id: number;
+  note: string;
+  created_by: number | null;
+  updated_by: number | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface MatchScore {
   id: number;
+  company_id: number;
   job_id: number;
   candidate_id: number;
   feature_score: number; // 0-100
@@ -191,6 +250,11 @@ export interface DashboardStats {
     action: 'accept' | 'reject' | 'save';
     timestamp: string;
   }[];
+  // Dashboard-only additions (see migration-analytics-decision-timing.sql era work) - nullable
+  // when there's no real basis to compute them, never a fabricated number.
+  swipesYesterday?: number;
+  swipesTodayChangePct?: number | null;
+  modelAccuracy?: number | null;
 }
 
 export interface RecruiterAnalytics {

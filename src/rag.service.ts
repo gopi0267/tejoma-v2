@@ -51,9 +51,7 @@ export async function indexCandidate(candidate: Candidate): Promise<void> {
   const content = buildCandidateChunk(candidate);
   if (!content.trim()) return;
   const embedding = await embedText(content);
-  // Candidates have no company_id anywhere in this schema (see migration-31-cols.sql) - chunk
-  // visibility intentionally mirrors that existing global visibility, not a new tenant boundary.
-  await db.upsertKnowledgeChunk({ company_id: null, source_type: 'candidate', source_id: candidate.id, content, embedding });
+  await db.upsertKnowledgeChunk({ company_id: candidate.company_id, source_type: 'candidate', source_id: candidate.id, content, embedding });
 }
 
 export async function indexJob(job: Job): Promise<void> {
@@ -115,7 +113,7 @@ export async function retrieveRelevantChunks(query: string, companyId: number): 
 // ==================== BULK BACKFILL (existing data indexed before this feature shipped) ====================
 
 export async function reindexAllCandidates(): Promise<{ indexed: number; failed: number }> {
-  const candidates = await db.getCandidates();
+  const candidates = await db.getAllCandidatesUnscoped();
   let indexed = 0;
   let failed = 0;
   for (const c of candidates) {
@@ -131,7 +129,7 @@ export async function reindexAllCandidates(): Promise<{ indexed: number; failed:
 }
 
 export async function reindexAllJobs(): Promise<{ indexed: number; failed: number }> {
-  const jobs = await db.getJobs();
+  const jobs = await db.getAllJobsUnscoped();
   let indexed = 0;
   let failed = 0;
   for (const j of jobs) {

@@ -10,12 +10,13 @@ import {
   VolumeX, BarChart3, LogOut, CheckCircle2, XCircle, Info, GraduationCap, Clock, 
   Building2, Briefcase, RefreshCw, ChevronLeft, ShieldCheck, HelpCircle, Laptop,
   User, CheckSquare, ListFilter, Users, History, CheckSquare as CheckSquareIcon,
-  Activity, Mail, Phone, Settings, ChevronUp, ChevronDown
+  Activity, Mail, Phone, Settings, ChevronUp, ChevronDown, Menu
 } from 'lucide-react';
 import { motion, AnimatePresence, useMotionValue, useTransform } from 'motion/react';
 import { Job, Candidate, MatchBreakdown } from '../types.js';
 import TejomaLogo from './TejomaLogo.js';
 import { apiFetch } from '../utils/apiFetch.js';
+import { useResponsiveBreakpoint } from '../hooks/useResponsiveBreakpoint.js';
 
 interface CardFieldProps {
   icon: React.ComponentType<{ className?: string }>;
@@ -44,6 +45,10 @@ interface SwipeInterfaceProps {
   setActiveTab?: (tab: string) => void;
   onLogout?: () => void;
   userInfo?: { id: number; name: string; email: string; role: string } | null;
+  // Opens the app-level sidebar drawer - this screen renders its own top bar (replacing
+  // App.tsx's mobile header), so without this a mobile user has no way back to the other
+  // pages once here.
+  onOpenSidebar?: () => void;
 }
 
 // Custom client-side synthesized sound generator using Web Audio API
@@ -104,7 +109,8 @@ export default function SwipeInterface({
   setSelectedJobId,
   setActiveTab,
   onLogout,
-  userInfo
+  userInfo,
+  onOpenSidebar
 }: SwipeInterfaceProps) {
   const [job, setJob] = useState<Job | null>(null);
   const [candidate, setCandidate] = useState<Candidate | null>(null);
@@ -118,6 +124,14 @@ export default function SwipeInterface({
   const viewportScrollRef = useRef<HTMLDivElement>(null);
   const cardScrollRef = useRef<HTMLDivElement>(null);
   const modalScrollRef = useRef<HTMLDivElement>(null);
+
+  // Decision-timing capture for Analytics Hub (see migration-analytics-decision-timing.sql) -
+  // resets whenever a *new* candidate becomes visible, covering every path that happens through
+  // (initial load, after a swipe, undo) without touching each individual setCandidate call site.
+  const candidateShownAtRef = useRef<number>(Date.now());
+  useEffect(() => {
+    candidateShownAtRef.current = Date.now();
+  }, [candidate?.id]);
 
   const scrollViewportUp = () => {
     if (viewportScrollRef.current) {
@@ -198,26 +212,7 @@ export default function SwipeInterface({
   const [copiedText, setCopiedText] = useState<string | null>(null);
 
   // Window Resize Watcher for Viewport Breakpoints and Orientations
-  const [windowSize, setWindowSize] = useState({
-    width: typeof window !== 'undefined' ? window.innerWidth : 1200,
-    height: typeof window !== 'undefined' ? window.innerHeight : 800
-  });
-
-  useEffect(() => {
-    const handleResize = () => {
-      setWindowSize({ width: window.innerWidth, height: window.innerHeight });
-    };
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
-
-  const isMobile = windowSize.width < 768;
-  const isMobileLandscape = windowSize.height < 500 && windowSize.width > windowSize.height;
-  const isTablet = windowSize.width >= 768 && windowSize.width < 1024;
-  const isTabletLandscape = windowSize.width >= 1024 && windowSize.width < 1280;
-  const isLaptopMedium = windowSize.width >= 1280 && windowSize.width < 1536;
-  const isLaptopLarge = windowSize.width >= 1536 && windowSize.width < 1920;
-  const isUltraWide = windowSize.width >= 1920;
+  const { isMobile, isTablet, isMobileLandscape } = useResponsiveBreakpoint();
 
   // Sync positions and load first queue
   useEffect(() => {
@@ -358,6 +353,8 @@ export default function SwipeInterface({
     if (action === 1) setAcceptedCount(prev => prev + 1);
     if (action === 0.5) setSavedCount(prev => prev + 1);
 
+    const decision_time_seconds = Number(((Date.now() - candidateShownAtRef.current) / 1000).toFixed(1));
+
     setLoading(true);
     try {
       const res = await apiFetch('/api/swipes', {
@@ -367,7 +364,8 @@ export default function SwipeInterface({
           recruiter_id: 1,
           job_id: job.id,
           candidate_id: candidate.id,
-          action
+          action,
+          decision_time_seconds
         })
       });
       const data = await res.json();
@@ -624,6 +622,18 @@ export default function SwipeInterface({
       >
         {/* Left Section: Back Button + Logo with gap */}
         <div className="flex items-center gap-4">
+          {/* This screen renders its own nav bar (replacing App.tsx's mobile header), so on
+              mobile a direct sidebar shortcut sits alongside "Back" rather than requiring a
+              detour through Dashboard first. */}
+          {onOpenSidebar && (
+            <button
+              onClick={onOpenSidebar}
+              aria-label="Open navigation menu"
+              className="md:hidden min-w-[44px] min-h-[44px] flex items-center justify-center text-[#666666] hover:text-[#1A1A1A] border border-[#E0E0E0] rounded-lg bg-white transition-colors cursor-pointer"
+            >
+              <Menu className="w-5 h-5" />
+            </button>
+          )}
           {setActiveTab && (
             <button 
               id="back-to-dashboard-btn"
@@ -657,7 +667,7 @@ export default function SwipeInterface({
             <button
               id="audio-toggle-btn"
               onClick={() => setSoundEnabled(!soundEnabled)}
-              className="p-1.5 rounded-lg text-[#666666] hover:text-[#27AE60] hover:bg-[#E5F5E5] transition-colors cursor-pointer"
+              className="p-3 rounded-lg text-[#666666] hover:text-[#27AE60] hover:bg-[#E5F5E5] transition-colors cursor-pointer"
               title={soundEnabled ? 'Mute sound effects' : 'Unmute sound effects'}
             >
               {soundEnabled ? <Volume2 className="w-5 h-5 text-[#27AE60]" /> : <VolumeX className="w-5 h-5 text-[#E74C3C]" />}
@@ -667,7 +677,7 @@ export default function SwipeInterface({
             <button
               id="filters-toggle-btn"
               onClick={() => setShowFilters(!showFilters)}
-              className={`p-1.5 rounded-lg text-[#666666] hover:text-[#27AE60] hover:bg-[#E5F5E5] transition-all cursor-pointer ${
+              className={`p-3 rounded-lg text-[#666666] hover:text-[#27AE60] hover:bg-[#E5F5E5] transition-all cursor-pointer ${
                 showFilters ? 'bg-[#E5F5E5] text-[#27AE60] border border-[#A8E6C1]' : ''
               }`}
               title="Filter Candidates"
@@ -679,7 +689,7 @@ export default function SwipeInterface({
             <button
               id="preferences-nav-btn"
               onClick={() => setShowSettingsModal(true)}
-              className="p-1.5 rounded-lg text-[#666666] hover:text-[#27AE60] hover:bg-[#E5F5E5] transition-colors cursor-pointer"
+              className="p-3 rounded-lg text-[#666666] hover:text-[#27AE60] hover:bg-[#E5F5E5] transition-colors cursor-pointer"
               title="System Settings"
             >
               <Settings className="w-5 h-5" style={{ width: '20px', height: '20px' }} />
@@ -690,7 +700,7 @@ export default function SwipeInterface({
               <button
                 id="analytics-nav-btn"
                 onClick={() => setActiveTab('analytics')}
-                className="p-1.5 rounded-lg text-[#666666] hover:text-[#27AE60] hover:bg-[#E5F5E5] transition-colors cursor-pointer"
+                className="p-3 rounded-lg text-[#666666] hover:text-[#27AE60] hover:bg-[#E5F5E5] transition-colors cursor-pointer"
                 title="Analytics Hub"
               >
                 <BarChart3 className="w-5 h-5" />
@@ -702,7 +712,7 @@ export default function SwipeInterface({
               <button
                 id="logout-nav-btn"
                 onClick={onLogout}
-                className="p-1.5 rounded-lg text-[#666666] hover:text-[#E74C3C] hover:bg-[#FFE5E5] transition-colors cursor-pointer"
+                className="p-3 rounded-lg text-[#666666] hover:text-[#E74C3C] hover:bg-[#FFE5E5] transition-colors cursor-pointer"
                 title="Terminate Session"
               >
                 <LogOut className="w-5 h-5" />
@@ -1035,24 +1045,27 @@ export default function SwipeInterface({
                       <div className="absolute bottom-3 left-0 right-0 flex items-center justify-around px-1 z-10">
                         <button
                           onClick={() => triggerSwipeAction('reject')}
-                          className="w-8 h-8 rounded-full bg-[#FFE5E5] border border-[#FFB3B3] text-[#E74C3C] flex items-center justify-center transition-all duration-200 active:scale-125 cursor-pointer shadow-sm"
+                          className="w-11 h-11 rounded-full bg-[#FFE5E5] border border-[#FFB3B3] text-[#E74C3C] flex items-center justify-center transition-all duration-200 active:scale-125 cursor-pointer shadow-sm"
                           title="Reject Candidate"
+                          aria-label="Reject candidate"
                         >
-                          <X className="w-3.5 h-3.5 stroke-[3]" />
+                          <X className="w-4 h-4 stroke-[3]" />
                         </button>
                         <button
                           onClick={() => triggerSwipeAction('save')}
-                          className="w-8 h-8 rounded-full bg-[#FFF9E5] border border-[#FFE680] text-[#F39C12] flex items-center justify-center transition-all duration-200 active:scale-125 cursor-pointer shadow-sm"
+                          className="w-11 h-11 rounded-full bg-[#FFF9E5] border border-[#FFE680] text-[#F39C12] flex items-center justify-center transition-all duration-200 active:scale-125 cursor-pointer shadow-sm"
                           title="Save for Later"
+                          aria-label="Save candidate for later"
                         >
-                          <Star className="w-3.5 h-3.5 fill-none stroke-[2.5]" />
+                          <Star className="w-4 h-4 fill-none stroke-[2.5]" />
                         </button>
                         <button
                           onClick={() => triggerSwipeAction('accept')}
-                          className="w-8 h-8 rounded-full bg-[#E5F5E5] border border-[#A8E6C1] text-[#27AE60] flex items-center justify-center transition-all duration-200 active:scale-125 cursor-pointer shadow-sm"
+                          className="w-11 h-11 rounded-full bg-[#E5F5E5] border border-[#A8E6C1] text-[#27AE60] flex items-center justify-center transition-all duration-200 active:scale-125 cursor-pointer shadow-sm"
                           title="Accept Candidate"
+                          aria-label="Accept candidate"
                         >
-                          <Check className="w-3.5 h-3.5 stroke-[3]" />
+                          <Check className="w-4 h-4 stroke-[3]" />
                         </button>
                       </div>
                     </div>
@@ -1251,14 +1264,14 @@ export default function SwipeInterface({
                     <div className="absolute right-3.5 bottom-16 flex flex-col gap-1.5 z-35">
                       <button
                         onClick={scrollCardUp}
-                        className="w-7 h-7 rounded-full bg-white/95 hover:bg-[#27AE60] text-[#27AE60] hover:text-white border border-slate-200 hover:border-[#27AE60] shadow-md flex items-center justify-center transition-all cursor-pointer active:scale-90"
+                        className="w-9 h-9 rounded-full bg-white/95 hover:bg-[#27AE60] text-[#27AE60] hover:text-white border border-slate-200 hover:border-[#27AE60] shadow-md flex items-center justify-center transition-all cursor-pointer active:scale-90"
                         title="Scroll Details Up"
                       >
                         <ChevronUp className="w-4 h-4 stroke-[3]" />
                       </button>
                       <button
                         onClick={scrollCardDown}
-                        className="w-7 h-7 rounded-full bg-white/95 hover:bg-[#27AE60] text-[#27AE60] hover:text-white border border-slate-200 hover:border-[#27AE60] shadow-md flex items-center justify-center transition-all cursor-pointer active:scale-90"
+                        className="w-9 h-9 rounded-full bg-white/95 hover:bg-[#27AE60] text-[#27AE60] hover:text-white border border-slate-200 hover:border-[#27AE60] shadow-md flex items-center justify-center transition-all cursor-pointer active:scale-90"
                         title="Scroll Details Down"
                       >
                         <ChevronDown className="w-4 h-4 stroke-[3]" />
@@ -1280,6 +1293,7 @@ export default function SwipeInterface({
                           onMouseLeave={() => setHoveredButton(null)}
                           className="w-14 h-14 rounded-full bg-[#FFE5E5] border-2 border-[#FFB3B3] text-[#E74C3C] flex items-center justify-center transition-all duration-300 active:scale-125 transform hover:scale-110 hover:bg-[#FFCCCC] shadow-md cursor-pointer"
                           title="Unlike Candidate"
+                          aria-label="Reject candidate"
                         >
                           <X className="w-6 h-6 stroke-[3]" />
                         </button>
@@ -1306,6 +1320,7 @@ export default function SwipeInterface({
                           onMouseLeave={() => setHoveredButton(null)}
                           className="w-14 h-14 rounded-full bg-[#FFF9E5] border-2 border-[#FFE680] text-[#F39C12] flex items-center justify-center transition-all duration-300 active:scale-125 transform hover:scale-110 hover:bg-[#FFECCC] shadow-md cursor-pointer"
                           title="Save Candidate"
+                          aria-label="Save candidate for later"
                         >
                           <Star className="w-6 h-6 fill-none stroke-[2.5]" />
                         </button>
@@ -1332,6 +1347,7 @@ export default function SwipeInterface({
                           onMouseLeave={() => setHoveredButton(null)}
                           className="w-14 h-14 rounded-full bg-[#E5F5E5] border-2 border-[#A8E6C1] text-[#27AE60] flex items-center justify-center transition-all duration-300 active:scale-125 transform hover:scale-110 hover:bg-[#CCFFCC] shadow-md cursor-pointer"
                           title="Like Candidate"
+                          aria-label="Accept candidate"
                         >
                           <Check className="w-6 h-6 stroke-[3]" />
                         </button>
@@ -1390,7 +1406,7 @@ export default function SwipeInterface({
                 id="footer-undo-btn"
                 onClick={handleUndo}
                 disabled={historyStack.length === 0}
-                className="w-10 h-10 rounded-xl bg-white border border-[#E0E0E0] hover:bg-[#F5F5F5] disabled:opacity-30 text-[#1A1A1A] flex items-center justify-center transition-all shadow-md cursor-pointer"
+                className="w-11 h-11 rounded-xl bg-white border border-[#E0E0E0] hover:bg-[#F5F5F5] disabled:opacity-30 text-[#1A1A1A] flex items-center justify-center transition-all shadow-md cursor-pointer"
                 title="Undo last swipe action"
               >
                 <RotateCcw className="w-4 h-4 text-[#27AE60]" />
@@ -1410,7 +1426,7 @@ export default function SwipeInterface({
                   playSwipeSound('skip', soundEnabled);
                 }}
                 disabled={!candidate}
-                className="w-10 h-10 rounded-xl bg-white border border-[#E0E0E0] hover:bg-[#F5F5F5] disabled:opacity-30 text-[#1A1A1A] flex items-center justify-center transition-all shadow-md cursor-pointer"
+                className="w-11 h-11 rounded-xl bg-white border border-[#E0E0E0] hover:bg-[#F5F5F5] disabled:opacity-30 text-[#1A1A1A] flex items-center justify-center transition-all shadow-md cursor-pointer"
                 title="Skip this profile"
               >
                 <FastForward className="w-4 h-4 text-[#27AE60]" />
@@ -1439,14 +1455,14 @@ export default function SwipeInterface({
         </div>
         <button
           onClick={scrollViewportUp}
-          className="w-8 h-8 md:w-10 md:h-10 rounded-lg md:rounded-xl bg-white hover:bg-[#27AE60] text-[#27AE60] hover:text-white border border-slate-200 hover:border-[#27AE60] shadow-sm flex items-center justify-center transition-all cursor-pointer active:scale-90 group"
+          className="w-9 h-9 md:w-11 md:h-11 rounded-lg md:rounded-xl bg-white hover:bg-[#27AE60] text-[#27AE60] hover:text-white border border-slate-200 hover:border-[#27AE60] shadow-sm flex items-center justify-center transition-all cursor-pointer active:scale-90 group"
           title="Scroll Page Up"
         >
           <ChevronUp className="w-4 h-4 md:w-5 md:h-5 stroke-[3] group-hover:-translate-y-0.5 transition-transform" />
         </button>
         <button
           onClick={scrollViewportDown}
-          className="w-8 h-8 md:w-10 md:h-10 rounded-lg md:rounded-xl bg-white hover:bg-[#27AE60] text-[#27AE60] hover:text-white border border-slate-200 hover:border-[#27AE60] shadow-sm flex items-center justify-center transition-all cursor-pointer active:scale-90 group"
+          className="w-9 h-9 md:w-11 md:h-11 rounded-lg md:rounded-xl bg-white hover:bg-[#27AE60] text-[#27AE60] hover:text-white border border-slate-200 hover:border-[#27AE60] shadow-sm flex items-center justify-center transition-all cursor-pointer active:scale-90 group"
           title="Scroll Page Down"
         >
           <ChevronDown className="w-4 h-4 md:w-5 md:h-5 stroke-[3] group-hover:translate-y-0.5 transition-transform" />
@@ -1499,7 +1515,7 @@ export default function SwipeInterface({
                 <button
                   id="close-details-top-btn"
                   onClick={() => setShowDetails(false)}
-                  className="text-slate-400 hover:text-[#1A1A1A] border border-[#E0E0E0] p-1.5 rounded-lg transition-colors cursor-pointer bg-white shadow-xs"
+                  className="text-slate-400 hover:text-[#1A1A1A] border border-[#E0E0E0] p-3 rounded-lg transition-colors cursor-pointer bg-white shadow-xs"
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -1576,14 +1592,14 @@ export default function SwipeInterface({
               <div className="absolute right-5 bottom-24 flex flex-col gap-1.5 z-40">
                 <button
                   onClick={scrollModalUp}
-                  className="w-8 h-8 rounded-full bg-white hover:bg-[#27AE60] text-[#27AE60] hover:text-white border border-slate-200 hover:border-[#27AE60] shadow-lg flex items-center justify-center transition-all cursor-pointer active:scale-90"
+                  className="w-9 h-9 rounded-full bg-white hover:bg-[#27AE60] text-[#27AE60] hover:text-white border border-slate-200 hover:border-[#27AE60] shadow-lg flex items-center justify-center transition-all cursor-pointer active:scale-90"
                   title="Scroll Modal Up"
                 >
                   <ChevronUp className="w-4 h-4 stroke-[3]" />
                 </button>
                 <button
                   onClick={scrollModalDown}
-                  className="w-8 h-8 rounded-full bg-white hover:bg-[#27AE60] text-[#27AE60] hover:text-white border border-slate-200 hover:border-[#27AE60] shadow-lg flex items-center justify-center transition-all cursor-pointer active:scale-90"
+                  className="w-9 h-9 rounded-full bg-white hover:bg-[#27AE60] text-[#27AE60] hover:text-white border border-slate-200 hover:border-[#27AE60] shadow-lg flex items-center justify-center transition-all cursor-pointer active:scale-90"
                   title="Scroll Modal Down"
                 >
                   <ChevronDown className="w-4 h-4 stroke-[3]" />

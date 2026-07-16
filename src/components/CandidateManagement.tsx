@@ -7,6 +7,7 @@ import React, { useState, useEffect } from 'react';
 import { Plus, Upload, X, AlertCircle, CheckCircle, Loader, Search, Filter, Trash2, Eye } from 'lucide-react';
 import { Candidate } from '../types.js';
 import { apiFetch } from '../utils/apiFetch.js';
+import { useResponsiveBreakpoint } from '../hooks/useResponsiveBreakpoint.js';
 
 interface CandidateManagementProps {
   candidates: Candidate[];
@@ -14,6 +15,7 @@ interface CandidateManagementProps {
 }
 
 export default function CandidateManagement({ candidates, fetchCandidates }: CandidateManagementProps) {
+  const { isMobile } = useResponsiveBreakpoint();
   const [showAddForm, setShowAddForm] = useState(false);
   const [showBulkImport, setShowBulkImport] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -192,23 +194,23 @@ export default function CandidateManagement({ candidates, fetchCandidates }: Can
   return (
     <div className="h-full w-full flex flex-col bg-gradient-to-br from-slate-50 to-slate-100">
       {/* Header */}
-      <div className="px-8 py-6 bg-white border-b border-slate-200 shadow-sm">
-        <div className="flex items-center justify-between">
+      <div className="px-4 sm:px-8 py-4 sm:py-6 bg-white border-b border-slate-200 shadow-sm">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold text-slate-900">Candidate Management</h1>
-            <p className="text-sm text-slate-600 mt-1">Manage your talent pool • {candidates.length} total candidates</p>
+            <h1 className="text-xl sm:text-2xl font-bold text-slate-900">Candidate Management</h1>
+            <p className="text-xs sm:text-sm text-slate-600 mt-1">Manage your talent pool • {candidates.length} total candidates</p>
           </div>
-          <div className="flex gap-3">
+          <div className="flex flex-col sm:flex-row gap-3">
             <button
               onClick={() => setShowAddForm(true)}
-              className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-semibold py-2.5 px-5 rounded-lg cursor-pointer transition-all shadow-md hover:shadow-lg"
+              className="flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-semibold py-2.5 px-5 rounded-lg cursor-pointer transition-all shadow-md hover:shadow-lg min-h-[44px]"
             >
               <Plus className="w-5 h-5" />
               Add Candidate
             </button>
             <button
               onClick={() => setShowBulkImport(true)}
-              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-semibold py-2.5 px-5 rounded-lg cursor-pointer transition-all shadow-md hover:shadow-lg"
+              className="flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-semibold py-2.5 px-5 rounded-lg cursor-pointer transition-all shadow-md hover:shadow-lg min-h-[44px]"
             >
               <Upload className="w-5 h-5" />
               Bulk Import
@@ -230,8 +232,8 @@ export default function CandidateManagement({ candidates, fetchCandidates }: Can
       )}
 
       {/* Search & Filter */}
-      <div className="px-8 py-4 bg-white border-b border-slate-200 mt-4">
-        <div className="flex items-center gap-4">
+      <div className="px-4 sm:px-8 py-4 bg-white border-b border-slate-200 mt-4">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 sm:gap-4">
           <div className="flex-1 relative">
             <Search className="absolute left-3 top-3 w-5 h-5 text-slate-400" />
             <input
@@ -242,7 +244,10 @@ export default function CandidateManagement({ candidates, fetchCandidates }: Can
               className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
             />
           </div>
-          <button className="flex items-center gap-2 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium rounded-lg cursor-pointer transition-colors">
+          <button
+            aria-label="Filter candidates"
+            className="flex items-center justify-center gap-2 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium rounded-lg cursor-pointer transition-colors min-h-[44px]"
+          >
             <Filter className="w-4 h-4" />
             Filter
           </button>
@@ -250,7 +255,7 @@ export default function CandidateManagement({ candidates, fetchCandidates }: Can
       </div>
 
       {/* Candidates Table */}
-      <div className="flex-1 overflow-auto p-8">
+      <div className="flex-1 overflow-auto p-4 sm:p-8">
         {filteredCandidates.length === 0 ? (
           <div className="flex items-center justify-center h-full">
             <div className="text-center">
@@ -259,16 +264,54 @@ export default function CandidateManagement({ candidates, fetchCandidates }: Can
               </div>
               <p className="text-slate-600 font-semibold text-lg">No candidates found</p>
               <p className="text-slate-500 text-sm mt-2">
-                {candidates.length === 0 
-                  ? 'Add candidates manually or import them in bulk to get started' 
+                {candidates.length === 0
+                  ? 'Add candidates manually or import them in bulk to get started'
                   : 'Try adjusting your search filters'}
               </p>
             </div>
           </div>
+        ) : isMobile ? (
+          /* Mobile card view - mirrors JobManagement.tsx's table/card pattern for consistency */
+          <div className="space-y-3">
+            {filteredCandidates.map((candidate) => (
+              <div
+                key={candidate.id}
+                className="bg-white border border-slate-200 p-4 rounded-xl shadow-xs space-y-3 cursor-pointer"
+                onClick={() => setSelectedCandidate(candidate)}
+              >
+                <div className="flex justify-between items-start gap-2">
+                  <div className="overflow-hidden min-w-0">
+                    <h4 className="font-bold text-slate-900 text-sm truncate" title={candidate.name}>{candidate.name}</h4>
+                    <p className="text-xs text-slate-600 truncate mt-0.5" title={candidate.email}>{candidate.email}</p>
+                  </div>
+                </div>
+                <div className="flex justify-between items-center text-xs text-slate-500 border-t border-slate-100 pt-2">
+                  <span className="truncate min-w-0" title={candidate.current_job_title || ''}>{candidate.current_job_title || '-'}</span>
+                  <span className="flex-shrink-0 ml-2">{candidate.years_of_experience || '-'}</span>
+                </div>
+                <div className="flex gap-2 pt-1" onClick={(e) => e.stopPropagation()}>
+                  <button
+                    onClick={() => setSelectedCandidate(candidate)}
+                    aria-label={`View details for ${candidate.name}`}
+                    className="flex-1 flex items-center justify-center gap-1.5 min-h-[44px] bg-blue-100 hover:bg-blue-200 text-blue-600 rounded-lg cursor-pointer transition-colors text-xs font-semibold"
+                  >
+                    <Eye className="w-4 h-4" /> View
+                  </button>
+                  <button
+                    onClick={() => handleDeleteCandidate(candidate.id)}
+                    aria-label={`Delete ${candidate.name}`}
+                    className="flex-1 flex items-center justify-center gap-1.5 min-h-[44px] bg-red-100 hover:bg-red-200 text-red-600 rounded-lg cursor-pointer transition-colors text-xs font-semibold"
+                  >
+                    <Trash2 className="w-4 h-4" /> Delete
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
         ) : (
-          <div className="grid gap-4">
+          <div className="grid gap-4 overflow-x-auto">
             {/* Table Header */}
-            <div className="grid grid-cols-5 gap-4 px-6 py-3 bg-slate-200 rounded-lg font-semibold text-sm text-slate-700">
+            <div className="grid grid-cols-5 gap-4 px-6 py-3 bg-slate-200 rounded-lg font-semibold text-sm text-slate-700 min-w-[640px]">
               <div className="min-w-0">Name</div>
               <div className="min-w-0">Email</div>
               <div className="min-w-0">Position</div>
@@ -278,7 +321,7 @@ export default function CandidateManagement({ candidates, fetchCandidates }: Can
 
             {/* Table Rows */}
             {filteredCandidates.map((candidate) => (
-              <div key={candidate.id} className="grid grid-cols-5 gap-4 px-6 py-4 bg-white rounded-lg border border-slate-200 hover:border-slate-300 hover:shadow-md transition-all items-center">
+              <div key={candidate.id} className="grid grid-cols-5 gap-4 px-6 py-4 bg-white rounded-lg border border-slate-200 hover:border-slate-300 hover:shadow-md transition-all items-center min-w-[640px]">
                 <div className="min-w-0">
                   <p className="font-semibold text-slate-900 truncate" title={candidate.name}>{candidate.name}</p>
                   {candidate.current_company && <p className="text-xs text-slate-600 mt-1 truncate" title={candidate.current_company}>{candidate.current_company}</p>}
@@ -295,15 +338,17 @@ export default function CandidateManagement({ candidates, fetchCandidates }: Can
                 <div className="flex gap-2">
                   <button
                     onClick={() => setSelectedCandidate(candidate)}
-                    className="p-2 bg-blue-100 hover:bg-blue-200 text-blue-600 rounded-lg cursor-pointer transition-colors"
+                    className="min-w-[44px] min-h-[44px] flex items-center justify-center bg-blue-100 hover:bg-blue-200 text-blue-600 rounded-lg cursor-pointer transition-colors"
                     title="View details"
+                    aria-label={`View details for ${candidate.name}`}
                   >
                     <Eye className="w-4 h-4" />
                   </button>
                   <button
                     onClick={() => handleDeleteCandidate(candidate.id)}
-                    className="p-2 bg-red-100 hover:bg-red-200 text-red-600 rounded-lg cursor-pointer transition-colors"
+                    className="min-w-[44px] min-h-[44px] flex items-center justify-center bg-red-100 hover:bg-red-200 text-red-600 rounded-lg cursor-pointer transition-colors"
                     title="Delete"
+                    aria-label={`Delete ${candidate.name}`}
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
@@ -323,14 +368,14 @@ export default function CandidateManagement({ candidates, fetchCandidates }: Can
                 <h2 className="text-xl font-bold text-slate-900">Add New Candidate</h2>
                 <p className="text-xs text-slate-600 mt-1">Fill in the candidate details below</p>
               </div>
-              <button onClick={() => setShowAddForm(false)} className="p-2 hover:bg-slate-200 rounded-lg transition-colors">
+              <button onClick={() => setShowAddForm(false)} aria-label="Close" className="min-w-[44px] min-h-[44px] flex items-center justify-center hover:bg-slate-200 rounded-lg transition-colors">
                 <X className="w-5 h-5 text-slate-600" />
               </button>
             </div>
 
-            <form onSubmit={handleSaveProfile} className="p-8 space-y-6">
+            <form onSubmit={handleSaveProfile} className="p-4 sm:p-8 space-y-6">
               {/* Row 1: Name & Email */}
-              <div className="grid grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                 <div>
                   <label className="block text-sm font-semibold text-slate-700 mb-2">Full Name *</label>
                   <input
@@ -356,7 +401,7 @@ export default function CandidateManagement({ candidates, fetchCandidates }: Can
               </div>
 
               {/* Row 2: Phone & Experience */}
-              <div className="grid grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                 <div>
                   <label className="block text-sm font-semibold text-slate-700 mb-2">Phone Number</label>
                   <input
@@ -380,7 +425,7 @@ export default function CandidateManagement({ candidates, fetchCandidates }: Can
               </div>
 
               {/* Row 3: Skills & Location */}
-              <div className="grid grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                 <div>
                   <label className="block text-sm font-semibold text-slate-700 mb-2">Skills (comma-separated)</label>
                   <input
@@ -404,7 +449,7 @@ export default function CandidateManagement({ candidates, fetchCandidates }: Can
               </div>
 
               {/* Row 4: Company & Job Title */}
-              <div className="grid grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                 <div>
                   <label className="block text-sm font-semibold text-slate-700 mb-2">Current Company</label>
                   <input
@@ -470,12 +515,12 @@ export default function CandidateManagement({ candidates, fetchCandidates }: Can
                 <h2 className="text-xl font-bold text-slate-900">Bulk Import Candidates</h2>
                 <p className="text-xs text-slate-600 mt-1">Paste JSON data to import multiple candidates at once</p>
               </div>
-              <button onClick={() => setShowBulkImport(false)} className="p-2 hover:bg-slate-200 rounded-lg transition-colors">
+              <button onClick={() => setShowBulkImport(false)} aria-label="Close" className="min-w-[44px] min-h-[44px] flex items-center justify-center hover:bg-slate-200 rounded-lg transition-colors">
                 <X className="w-5 h-5 text-slate-600" />
               </button>
             </div>
 
-            <form onSubmit={handleBulkImport} className="p-8 space-y-6">
+            <form onSubmit={handleBulkImport} className="p-4 sm:p-8 space-y-6">
               <div>
                 <label className="block text-sm font-semibold text-slate-700 mb-2">JSON Data *</label>
                 <textarea
@@ -519,14 +564,14 @@ export default function CandidateManagement({ candidates, fetchCandidates }: Can
           <div className="bg-white rounded-xl w-full max-w-2xl max-h-[85vh] overflow-auto shadow-2xl">
             <div className="sticky top-0 bg-gradient-to-r from-slate-50 to-slate-100 flex items-center justify-between p-6 border-b border-slate-200">
               <h2 className="text-xl font-bold text-slate-900">{selectedCandidate.name}</h2>
-              <button onClick={() => setSelectedCandidate(null)} className="p-2 hover:bg-slate-300 rounded-lg transition-colors">
+              <button onClick={() => setSelectedCandidate(null)} aria-label="Close" className="min-w-[44px] min-h-[44px] flex items-center justify-center hover:bg-slate-300 rounded-lg transition-colors">
                 <X className="w-5 h-5 text-slate-600" />
               </button>
             </div>
 
-            <div className="p-8 space-y-6">
+            <div className="p-4 sm:p-8 space-y-6">
               {/* Contact */}
-              <div className="grid grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                 <div>
                   <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Email</p>
                   <p className="text-slate-900 font-medium mt-2">{selectedCandidate.email || '-'}</p>
@@ -546,7 +591,7 @@ export default function CandidateManagement({ candidates, fetchCandidates }: Can
               </div>
 
               {/* Professional */}
-              <div className="grid grid-cols-2 gap-6 pt-6 border-t border-slate-100">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 pt-6 border-t border-slate-100">
                 <div>
                   <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Current Position</p>
                   <p className="text-slate-900 font-medium mt-2">{selectedCandidate.current_job_title || '-'}</p>
@@ -594,7 +639,7 @@ export default function CandidateManagement({ candidates, fetchCandidates }: Can
                   </div>
                 </div>
               )}
-              <div className="grid grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                 <div>
                   <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Technical Tools</p>
                   <p className="text-slate-900 font-medium mt-2">{selectedCandidate.technical_tools || '-'}</p>
@@ -606,7 +651,7 @@ export default function CandidateManagement({ candidates, fetchCandidates }: Can
               </div>
 
               {/* Education */}
-              <div className="grid grid-cols-2 gap-6 pt-6 border-t border-slate-100">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 pt-6 border-t border-slate-100">
                 <div>
                   <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Highest Qualification</p>
                   <p className="text-slate-900 font-medium mt-2">{selectedCandidate.highest_qualification || '-'}</p>
@@ -626,7 +671,7 @@ export default function CandidateManagement({ candidates, fetchCandidates }: Can
               </div>
 
               {/* Compensation */}
-              <div className="grid grid-cols-2 gap-6 pt-6 border-t border-slate-100">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 pt-6 border-t border-slate-100">
                 <div>
                   <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Current CTC</p>
                   <p className="text-slate-900 font-medium mt-2">{selectedCandidate.current_ctc || '-'}</p>

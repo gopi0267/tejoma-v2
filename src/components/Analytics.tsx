@@ -18,6 +18,7 @@ interface DashboardStats {
     candidateName: string;
     jobTitle: string;
     action: 'accept' | 'save' | 'reject';
+    matchScore: number;
     timestamp: string;
   }[];
 }
@@ -30,11 +31,15 @@ interface SkillStat {
 interface RecruiterStat {
   id: number;
   name: string;
-  email: string;
+  email: string | null;
   swipesCount: number;
   acceptanceRate: number;
   averageMatchScore: number;
-  avgTimeSpentSeconds: number;
+  // null until enough decision-timing data exists for this recruiter (see
+  // migration-analytics-decision-timing.sql) - rendered as "N/A", never a fake number.
+  avgTimeSpentSeconds: number | null;
+  lastLoginAt: string | null;
+  status: 'active' | 'disabled';
 }
 
 export default function Analytics() {
@@ -52,7 +57,7 @@ export default function Analytics() {
       const [dashRes, skillsRes, recRes] = await Promise.all([
         apiFetch('/api/analytics/dashboard'),
         apiFetch('/api/analytics/skills'),
-        apiFetch('/api/analytics/recruiter/1')
+        apiFetch('/api/analytics/recruiter/me')
       ]);
 
       if (!dashRes.ok || !skillsRes.ok || !recRes.ok) {
@@ -76,6 +81,12 @@ export default function Analytics() {
 
   useEffect(() => {
     fetchAnalyticsData();
+    // Auto-refresh so the page reflects new swipes without a manual reload - polls the same
+    // already company-scoped endpoints rather than subscribing to the app's global SSE broadcast
+    // (src/realtime.ts), which isn't scoped per-tenant and would leak other companies' event
+    // payloads to this browser.
+    const interval = setInterval(fetchAnalyticsData, 30000);
+    return () => clearInterval(interval);
   }, []);
 
   const handleExportCSV = () => {
@@ -398,7 +409,7 @@ export default function Analytics() {
           </div>
           <div className="border-t border-slate-50 pt-2.5 flex justify-between items-center text-[10px] text-slate-400">
             <span>Graph updates on live candidate evaluations.</span>
-            <span className="text-indigo-500 font-bold flex items-center gap-0.5">● Realtime Sync Active</span>
+            <span className="text-indigo-500 font-bold flex items-center gap-0.5">● Auto-refreshing every 30s</span>
           </div>
         </div>
 
@@ -406,18 +417,22 @@ export default function Analytics() {
         <div className="bg-white border border-slate-200/70 rounded-2xl p-4 flex flex-col justify-between shadow-xs">
           <div>
             <h3 className="text-sm font-bold text-slate-900 uppercase tracking-tight">Active Recruiter Profile</h3>
-            <p className="text-[10px] text-slate-400">Calibration efficiency metrics for .</p>
+            <p className="text-[10px] text-slate-400">Your own calibration efficiency metrics.</p>
           </div>
 
           {recruiterData ? (
             <div className="space-y-4 my-4 flex-1 flex flex-col justify-center">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-full bg-indigo-50 text-indigo-700 font-extrabold flex items-center justify-center text-sm border border-indigo-100">
-                  SM
+                  {recruiterData.name.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase() || '?'}
                 </div>
                 <div>
                   <h4 className="text-xs font-bold text-slate-800">{recruiterData.name}</h4>
-                  <span className="text-[10px] text-slate-400 font-mono">{recruiterData.email}</span>
+                  <span className="text-[10px] text-slate-400 font-mono">{recruiterData.email || '-'}</span>
+                  <div className="flex items-center gap-1.5 mt-0.5">
+                    <span className={`text-[8px] font-extrabold uppercase tracking-widest px-1.5 py-0.5 rounded border ${recruiterData.status === 'active' ? 'text-emerald-700 border-emerald-100 bg-emerald-50' : 'text-rose-700 border-rose-100 bg-rose-50'}`}>{recruiterData.status}</span>
+                    <span className="text-[9px] text-slate-400">Last login: {recruiterData.lastLoginAt ? new Date(recruiterData.lastLoginAt).toLocaleString() : 'Never'}</span>
+                  </div>
                 </div>
               </div>
 
@@ -436,7 +451,7 @@ export default function Analytics() {
                 </div>
                 <div className="bg-slate-50 p-2 rounded-xl">
                   <span className="block text-[8px] font-bold text-slate-400 uppercase tracking-wider">Avg Review Velocity</span>
-                  <span className="text-sm font-extrabold text-indigo-600 font-mono block mt-0.5">{recruiterData.avgTimeSpentSeconds}s</span>
+                  <span className="text-sm font-extrabold text-indigo-600 font-mono block mt-0.5">{recruiterData.avgTimeSpentSeconds != null ? `${recruiterData.avgTimeSpentSeconds}s` : 'N/A'}</span>
                 </div>
               </div>
             </div>
@@ -513,8 +528,8 @@ export default function Analytics() {
                   actionBadge = 'Saved';
                   actionColor = 'text-amber-700 bg-amber-50 border-amber-100/30';
                 } else {
-                  actionBadge = 'Deferred';
-                  actionColor = 'text-slate-500 bg-slate-100 border-slate-200/40';
+                  actionBadge = 'Rejected';
+                  actionColor = 'text-rose-700 bg-rose-50 border-rose-100/30';
                 }
 
                 return (
@@ -526,10 +541,11 @@ export default function Analytics() {
                           {actionBadge}
                         </span>
                       </div>
-                      <p className="text-[10px] text-slate-500 mt-0.5 truncate max-w-[200px]">{activity.jobTitle}</p>
+                      <p className="text-[10px] text-slate-500 mt-0.5 truncate max-w-[200px]">{activity.jobTitle} · by {activity.recruiterName}</p>
                     </div>
                     <div className="text-right flex-shrink-0">
-                      <span className="text-[9px] text-slate-400 font-mono">
+                      <span className="text-[10px] font-mono font-bold text-slate-600">{activity.matchScore}%</span>
+                      <span className="text-[9px] text-slate-400 font-mono block">
                         {new Date(activity.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                       </span>
                     </div>

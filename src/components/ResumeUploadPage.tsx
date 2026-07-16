@@ -211,11 +211,11 @@ export default function ResumeUploadPage({ onBackToLanding, onViewChange }: Resu
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="bg-white rounded-2xl shadow-lg p-8 border border-neutral-200"
+          className="bg-white rounded-2xl shadow-lg p-4 sm:p-8 border border-neutral-200"
         >
           {/* Upload Drop Zone */}
           <label className="block mb-6">
-            <div className="border-2 border-dashed border-blue-300 rounded-xl p-8 text-center cursor-pointer hover:bg-blue-50 transition">
+            <div className="border-2 border-dashed border-blue-300 rounded-xl p-4 sm:p-8 text-center cursor-pointer hover:bg-blue-50 transition">
               <Upload className="w-12 h-12 text-blue-600 mx-auto mb-3" />
               <p className="text-sm font-bold text-neutral-700 mb-1">
                 Click to select files or drag and drop
@@ -375,9 +375,9 @@ export default function ResumeUploadPage({ onBackToLanding, onViewChange }: Resu
                       {FIELD_GROUPS.map(group => (
                         <div key={group.title}>
                           <h3 className="text-xs font-bold uppercase tracking-wide text-neutral-500 mb-3">{group.title}</h3>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
                             {group.fields.map(field => (
-                              <div key={field.key} className={field.multiline ? 'sm:col-span-2' : ''}>
+                              <div key={field.key} className={field.multiline ? 'sm:col-span-2 xl:col-span-3' : ''}>
                                 <label className="block text-xs font-semibold text-neutral-600 mb-1">{field.label}</label>
                                 {field.multiline ? (
                                   <textarea

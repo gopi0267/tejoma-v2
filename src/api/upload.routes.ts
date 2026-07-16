@@ -9,7 +9,21 @@ import { requireAuth, requireRole } from '../middleware/auth.middleware.js';
 
 const router = Router();
 router.use(requireAuth, requireRole('recruiter', 'admin'));
-const upload = multer({ dest: 'uploads/' });
+
+const ALLOWED_RESUME_MIME_TYPES = new Set([
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'text/plain',
+]);
+
+const upload = multer({
+  dest: 'uploads/',
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB - generous for a resume, rejects abuse
+  fileFilter: (_req, file, cb) => {
+    cb(null, ALLOWED_RESUME_MIME_TYPES.has(file.mimetype));
+  },
+});
 
 // Helper function to extract text from various file formats
 async function extractTextFromFile(filePath: string, originalName: string): Promise<string> {

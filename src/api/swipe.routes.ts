@@ -10,21 +10,21 @@ router.use(requireAuth, requireRole('recruiter', 'admin'));
 
 router.get('/matches/queue/:job_id', async (req, res) => {
     try {
+      const companyId = req.user!.company_id;
       const job_id = parseInt(req.params.job_id);
       if (isNaN(job_id)) {
         return res.status(400).json({ error: 'Invalid Job ID parameter' });
       }
-      
-      const jobs = await db.getJobs();
-      const job = jobs.find(j => j.id === job_id);
+
+      const job = await db.getJobById(job_id, companyId);
       if (!job) {
         return res.status(404).json({ error: 'Job not found' });
       }
-  
-      const swipes = await db.getSwipes();
+
+      const swipes = await db.getSwipes(companyId);
       const swipedCandidateIds = new Set(swipes.filter(s => s.job_id === job_id).map(s => s.candidate_id));
-  
-      const candidates = await db.getCandidates();
+
+      const candidates = await db.getCandidates(companyId);
       const unswipedCandidates = candidates.filter(c => !swipedCandidateIds.has(c.id));
   
       if (unswipedCandidates.length === 0) {
@@ -61,17 +61,16 @@ router.get('/matches/queue/:job_id', async (req, res) => {
 
 router.post('/matches/score', async (req, res) => {
     try {
+      const companyId = req.user!.company_id;
       const { job_id, candidate_id } = req.body;
       const parsedJobId = parseInt(job_id);
       const parsedCandId = parseInt(candidate_id);
       if (isNaN(parsedJobId) || isNaN(parsedCandId)) {
         return res.status(400).json({ error: 'Invalid Job ID or Candidate ID' });
       }
-      const jobs = await db.getJobs();
-      const candidates = await db.getCandidates();
-      const job = jobs.find(j => j.id === parsedJobId);
-      const candidate = candidates.find(c => c.id === parsedCandId);
-  
+      const job = await db.getJobById(parsedJobId, companyId);
+      const candidate = await db.getCandidateById(parsedCandId, companyId);
+
       if (!job || !candidate) {
         return res.status(404).json({ error: 'Job or Candidate not found' });
       }
@@ -92,42 +91,51 @@ router.post('/matches/score', async (req, res) => {
   
 router.post('/swipes', async (req, res) => {
     try {
-      const { recruiter_id, job_id, candidate_id, action } = req.body;
-      console.log('🔵 SWIPE RECEIVED:', { recruiter_id, job_id, candidate_id, action });
-      
-      if (!recruiter_id || !job_id || !candidate_id || action === undefined) {
+      const companyId = req.user!.company_id;
+      // recruiter_id is derived from the authenticated session, never trusted from the client -
+      // otherwise any signed-in user could record swipes attributed to a different recruiter.
+      const recruiter_id = req.user!.user_id;
+      const { job_id, candidate_id, action, decision_time_seconds } = req.body;
+      console.log('🔵 SWIPE RECEIVED:', { recruiter_id, job_id, candidate_id, action, decision_time_seconds });
+
+      if (!job_id || !candidate_id || action === undefined) {
         return res.status(400).json({ error: 'Missing required swipe payload properties' });
       }
-  
-      const jobs = await db.getJobs();
-      const candidates = await db.getCandidates();
-      const job = jobs.find(j => j.id === parseInt(job_id));
-      const candidate = candidates.find(c => c.id === parseInt(candidate_id));
-      
+
+      const job = await db.getJobById(parseInt(job_id), companyId);
+      const candidate = await db.getCandidateById(parseInt(candidate_id), companyId);
+
       console.log('🟢 FOUND:', { job: job?.title, candidate: candidate?.name });
-      
+
       if (!job || !candidate) {
         return res.status(404).json({ error: 'Job or Candidate not found' });
       }
-  
+
       const scoreData = await calculateMatchScore(job, candidate, { skipGeminiSummary: true });
-  
+
       // ✅ SAVE SWIPE TO DATABASE
-      console.log('💾 SAVING SWIPE:', { recruiter_id: parseInt(recruiter_id), candidate_id: parseInt(candidate_id), job_id: parseInt(job_id), action: Number(action), match_score: scoreData.final_score });
-      
+      console.log('💾 SAVING SWIPE:', { recruiter_id, candidate_id: parseInt(candidate_id), job_id: parseInt(job_id), action: Number(action), match_score: scoreData.final_score });
+
       const savedSwipe = await db.recordSwipe({
-        recruiter_id: parseInt(recruiter_id),
+        company_id: companyId,
+        recruiter_id,
         candidate_id: parseInt(candidate_id),
         job_id: parseInt(job_id),
         action: Number(action),
         match_score: scoreData.final_score,
-        used_for_training: false
+        used_for_training: false,
+        // Captured at decision time (see migration-recruiter-review.sql) so Recruiter Review's
+        // score breakdown doesn't drift as the ML ensemble retrains after this swipe.
+        breakdown: scoreData.breakdown,
+        // Optional client-measured seconds-on-card (see migration-analytics-decision-timing.sql);
+        // undefined/invalid values simply store NULL, never blocking the swipe itself.
+        decision_time_seconds: typeof decision_time_seconds === 'number' && isFinite(decision_time_seconds) ? decision_time_seconds : null,
       });
-      
+
       console.log('✅ SWIPE SAVED:', savedSwipe);
 
       broadcastEvent('swipe-completed', {
-        recruiter_id: parseInt(recruiter_id),
+        recruiter_id,
         job_id: parseInt(job_id),
         candidate_id: parseInt(candidate_id),
         candidateName: candidate.name,
@@ -137,14 +145,16 @@ router.post('/swipes', async (req, res) => {
       // Retrain the matching ensemble in the background - every swipe is a fresh labeled
       // example, and training on the small dataset this app currently has is cheap. Never
       // blocks the swipe response; a slow/failed retrain must not break the swipe UX.
+      // Training stays pooled across all companies (it only ever sees numeric feature vectors,
+      // never PII), even though the swipe/candidate/job data itself is tenant-scoped.
       trainModelOnStartup().catch((err) => logger.warn({ err: err.message }, 'Background retrain after swipe failed'));
 
       // GET NEXT CANDIDATE
-      const swipes = await db.getSwipes();
+      const swipes = await db.getSwipes(companyId);
       console.log('📊 TOTAL SWIPES IN DB:', swipes.length);
 
       const swipedCandidateIds = new Set(swipes.filter(s => s.job_id === job.id).map(s => s.candidate_id));
-      const allCandidates = await db.getCandidates();
+      const allCandidates = await db.getCandidates(companyId);
       const unswipedCandidates = allCandidates.filter(c => !swipedCandidateIds.has(c.id));
 
       console.log('👥 UNREVIEWED:', unswipedCandidates.length, 'of', allCandidates.length);
@@ -178,10 +188,11 @@ router.post('/swipes', async (req, res) => {
 });
   
 router.get('/swipes/history', async (req, res) => {
-    const swipes = await db.getSwipes();
-    const candidates = await db.getCandidates();
-    const jobs = await db.getJobs();
-  
+    const companyId = req.user!.company_id;
+    const swipes = await db.getSwipes(companyId);
+    const candidates = await db.getCandidates(companyId);
+    const jobs = await db.getJobs(companyId);
+
     const history = swipes.map(s => {
       const candidate = candidates.find(c => c.id === s.candidate_id);
       const job = jobs.find(j => j.id === s.job_id);
@@ -196,9 +207,12 @@ router.get('/swipes/history', async (req, res) => {
 });
   
 router.get('/swipes/stats', async (req, res) => {
-    const recruiter_id = parseInt(req.query.recruiter_id as string) || 1;
-    const swipes = (await db.getSwipes()).filter(s => s.recruiter_id === recruiter_id);
-  
+    const companyId = req.user!.company_id;
+    // Defaults to the caller's own stats rather than a hardcoded id; an explicit recruiter_id
+    // (e.g. to view a teammate's stats) is still allowed but scoped to the caller's own company.
+    const recruiter_id = parseInt(req.query.recruiter_id as string) || req.user!.user_id;
+    const swipes = (await db.getSwipes(companyId)).filter(s => s.recruiter_id === recruiter_id);
+
     const total_swipes = swipes.length;
     const acceptances = swipes.filter(s => s.action === 1).length;
     const acceptance_rate = total_swipes > 0 ? Number(((acceptances / total_swipes) * 100).toFixed(1)) : 0;

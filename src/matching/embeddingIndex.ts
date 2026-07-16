@@ -14,7 +14,7 @@ export async function indexCandidateEmbedding(candidate: Candidate): Promise<voi
   if (!candidate.resume_text || !candidate.resume_text.trim()) return;
   const embedding = await generateEmbedding(candidate.resume_text);
   if (!embedding) return; // ML service unavailable - leave resume_embedding null, matching falls back gracefully
-  await db.updateCandidate(candidate.id, { resume_embedding: embedding });
+  await db.updateCandidate(candidate.id, { resume_embedding: embedding }, candidate.company_id);
 }
 
 export async function indexJobEmbedding(job: Job): Promise<void> {

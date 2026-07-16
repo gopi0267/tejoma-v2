@@ -7,8 +7,9 @@ import React, { useState, useEffect } from 'react';
 import { CheckCircle, ArrowRight, ShieldCheck, ArrowLeft } from 'lucide-react';
 import TejomaLogo from './TejomaLogo.js';
 import { useAuth } from '../context/AuthContext.js';
+import CompanyRegistration from './CompanyRegistration.js';
 
-type AuthMode = 'login' | 'signup-details' | 'signup-otp' | 'signup-password' | 'forgot-identifier' | 'forgot-otp' | 'forgot-reset';
+type AuthMode = 'login' | 'company-registration' | 'forgot-identifier' | 'forgot-otp' | 'forgot-reset';
 
 async function postJson(url: string, body: any) {
   const res = await fetch(url, {
@@ -33,16 +34,6 @@ export default function Login() {
   const [loginIdentifier, setLoginIdentifier] = useState('recruiter@tejoma.com');
   const [loginPassword, setLoginPassword] = useState('Tejoma@123');
 
-  // Signup wizard fields
-  const [signupName, setSignupName] = useState('');
-  const [signupIdentifier, setSignupIdentifier] = useState('');
-  const [signupCompany, setSignupCompany] = useState('');
-  const [signupCompanyId, setSignupCompanyId] = useState<number | null>(null);
-  const [signupChannel, setSignupChannel] = useState<'email' | 'phone'>('email');
-  const [signupOtp, setSignupOtp] = useState('');
-  const [signupPassword, setSignupPassword] = useState('');
-  const [signupConfirmPassword, setSignupConfirmPassword] = useState('');
-
   // Forgot-password wizard fields
   const [forgotIdentifier, setForgotIdentifier] = useState('');
   const [forgotChannel, setForgotChannel] = useState<'email' | 'phone'>('email');
@@ -55,7 +46,6 @@ export default function Login() {
     setMode('login');
     setError('');
     setInfo('');
-    setSignupOtp('');
     setForgotOtp('');
     setForgotDone(false);
   };
@@ -71,108 +61,7 @@ export default function Login() {
     setError('');
     try {
       const data = await postJson('/api/auth/login', { identifier: loginIdentifier, password: loginPassword, remember: rememberMe });
-      login(data.user_info, data.company_id);
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // ==================== SIGN UP: step 1 - send OTP ====================
-  const handleSignupStart = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!signupName || !signupIdentifier || !signupCompany) {
-      setError('Please complete all required fields.');
-      return;
-    }
-    setLoading(true);
-    setError('');
-    try {
-      const data = await postJson('/api/auth/signup/start', {
-        name: signupName,
-        identifier: signupIdentifier,
-        company_name: signupCompany,
-      });
-      setSignupIdentifier(data.identifier);
-      setSignupChannel(data.identifier_type);
-      setSignupCompanyId(data.company_id);
-      setMode('signup-otp');
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // ==================== SIGN UP: resend OTP (reuses the captured details) ====================
-  const handleResendSignupOtp = async () => {
-    setLoading(true);
-    setError('');
-    setInfo('');
-    try {
-      const data = await postJson('/api/auth/signup/start', {
-        name: signupName,
-        identifier: signupIdentifier,
-        company_name: signupCompany,
-      });
-      setSignupIdentifier(data.identifier);
-      setSignupChannel(data.identifier_type);
-      setSignupCompanyId(data.company_id);
-      setInfo('A new code has been sent.');
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // ==================== SIGN UP: step 2 - verify OTP ====================
-  const handleSignupVerify = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (signupOtp.length !== 6) {
-      setError('Enter the 6-digit code.');
-      return;
-    }
-    setLoading(true);
-    setError('');
-    try {
-      await postJson('/api/auth/verify-otp', { identifier: signupIdentifier, otp: signupOtp, purpose: 'signup' });
-      setMode('signup-password');
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // ==================== SIGN UP: step 3 - set password ====================
-  const handleSignupComplete = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!signupPassword || !signupConfirmPassword) {
-      setError('Please set and confirm your password.');
-      return;
-    }
-    if (signupPassword !== signupConfirmPassword) {
-      setError('Passwords do not match.');
-      return;
-    }
-    if (signupPassword.length < 8) {
-      setError('Password must be at least 8 characters.');
-      return;
-    }
-    setLoading(true);
-    setError('');
-    try {
-      const data = await postJson('/api/auth/signup/complete', {
-        name: signupName,
-        identifier: signupIdentifier,
-        company_id: signupCompanyId,
-        password: signupPassword,
-        confirm_password: signupConfirmPassword,
-        remember: rememberMe,
-      });
-      login(data.user_info, data.company_id);
+      login(data.user_info, data.company_id, data.company);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -268,6 +157,12 @@ export default function Login() {
     }
   };
 
+  // Company Registration is a dedicated full page (many more fields than fit this card), not
+  // another step of this wizard - it renders entirely in place of the login card.
+  if (mode === 'company-registration') {
+    return <CompanyRegistration onBackToLogin={resetToLogin} />;
+  }
+
   return (
     <div id="auth-screen" className="min-h-screen flex flex-col items-center justify-center p-4" style={{ backgroundColor: '#F3F2EF' }}>
 
@@ -278,32 +173,6 @@ export default function Login() {
       </div>
 
       <div className="bg-white rounded-2xl w-full max-w-md shadow-md p-8 sm:p-10">
-
-        {/* ============ LOG IN / SIGN UP TAB SWITCHER ============ */}
-        {/* Only shown on the two entry-point screens - hidden during OTP/password sub-steps
-            and the forgot-password flow, where jumping tabs mid-verification would lose progress. */}
-        {(mode === 'login' || mode === 'signup-details') && (
-          <div className="flex mb-8 bg-[#F3F2EF] rounded-full p-1">
-            <button
-              type="button"
-              onClick={() => { setMode('login'); setError(''); setInfo(''); }}
-              className={`flex-1 py-2 text-sm font-bold text-center rounded-full transition-colors cursor-pointer ${
-                mode === 'login' ? 'bg-white text-[#1A1A1A] shadow-sm' : 'text-[#666666] hover:text-[#1A1A1A]'
-              }`}
-            >
-              Log In
-            </button>
-            <button
-              type="button"
-              onClick={() => { setMode('signup-details'); setError(''); setInfo(''); }}
-              className={`flex-1 py-2 text-sm font-bold text-center rounded-full transition-colors cursor-pointer ${
-                mode === 'signup-details' ? 'bg-white text-[#1A1A1A] shadow-sm' : 'text-[#666666] hover:text-[#1A1A1A]'
-              }`}
-            >
-              Sign Up
-            </button>
-          </div>
-        )}
 
         {/* ============ LOGIN ============ */}
         {mode === 'login' && (
@@ -337,72 +206,13 @@ export default function Login() {
             <button type="submit" disabled={loading} className="w-full bg-[#27AE60] hover:bg-[#219653] active:bg-[#1E8449] text-white text-sm font-bold py-3 rounded-full transition-colors cursor-pointer shadow-sm disabled:opacity-60">
               {loading ? 'Logging In...' : 'Log In'}
             </button>
-          </form>
-        )}
 
-        {/* ============ SIGN UP: STEP 1 - details ============ */}
-        {mode === 'signup-details' && (
-          <form onSubmit={handleSignupStart} className="space-y-5">
-            <TextField label="Full name" value={signupName} onChange={(e) => setSignupName(e.target.value)} placeholder="Sarah Mitchell" />
-
-            <TextField
-              label="Email or phone number"
-              value={signupIdentifier}
-              onChange={(e) => setSignupIdentifier(e.target.value)}
-              placeholder="sarah@company.com or +91 98765 43210"
-              hint="We'll send a 6-digit verification code here."
-            />
-
-            <TextField label="Company name" value={signupCompany} onChange={(e) => setSignupCompany(e.target.value)} placeholder="Tejoma Tech Inc" />
-
-            {error && <ErrorBanner text={error} />}
-
-            <p className="text-xs text-[#666666] text-center">
-              By clicking Send Code, you agree to Tejoma's Terms of Service and Privacy Policy.
+            <p className="text-center text-xs text-[#666666]">
+              New company?{' '}
+              <button type="button" onClick={() => { setMode('company-registration'); setError(''); setInfo(''); }} className="text-[#27AE60] font-semibold hover:underline cursor-pointer">
+                Register your company
+              </button>
             </p>
-
-            <button type="submit" disabled={loading} className="w-full bg-[#27AE60] hover:bg-[#219653] active:bg-[#1E8449] text-white text-sm font-bold py-3 rounded-full transition-colors cursor-pointer shadow-sm disabled:opacity-60">
-              {loading ? 'Sending Code...' : 'Send Verification Code'}
-            </button>
-          </form>
-        )}
-
-        {/* ============ SIGN UP: STEP 2 - OTP ============ */}
-        {mode === 'signup-otp' && (
-          <OtpStep
-            title="Verify Your Account"
-            description={`Enter the 6-digit code sent via ${signupChannel} to`}
-            identifier={signupIdentifier}
-            otp={signupOtp}
-            setOtp={setSignupOtp}
-            onSubmit={handleSignupVerify}
-            onBack={() => { setMode('signup-details'); setError(''); setInfo(''); }}
-            onResend={handleResendSignupOtp}
-            loading={loading}
-            error={error}
-            info={info}
-          />
-        )}
-
-        {/* ============ SIGN UP: STEP 3 - password ============ */}
-        {mode === 'signup-password' && (
-          <form onSubmit={handleSignupComplete} className="space-y-5">
-            <div className="mb-1 text-center">
-              <h2 className="text-lg font-bold text-[#1A1A1A]">Create your password</h2>
-              <p className="text-[#666666] text-xs mt-1">Verified! Now set a password for your account.</p>
-            </div>
-
-            <div>
-              <PasswordField label="New password (8 or more characters)" value={signupPassword} onChange={(e) => setSignupPassword(e.target.value)} placeholder="Enter a password" />
-              <PasswordStrengthMeter password={signupPassword} />
-            </div>
-            <PasswordField label="Confirm password" value={signupConfirmPassword} onChange={(e) => setSignupConfirmPassword(e.target.value)} placeholder="Re-enter password" />
-
-            {error && <ErrorBanner text={error} />}
-
-            <button type="submit" disabled={loading} className="w-full bg-[#27AE60] hover:bg-[#219653] active:bg-[#1E8449] text-white text-sm font-bold py-3 rounded-full transition-colors cursor-pointer shadow-sm disabled:opacity-60">
-              {loading ? 'Creating Account...' : 'Create Account & Log In'}
-            </button>
           </form>
         )}
 
@@ -484,7 +294,7 @@ export default function Login() {
 
 // ==================== Shared, plain (icon-less) field components ====================
 
-function TextField({ label, value, onChange, placeholder, hint, type = 'text' }: {
+export function TextField({ label, value, onChange, placeholder, hint, type = 'text' }: {
   label: string;
   value: string;
   onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
@@ -508,7 +318,7 @@ function TextField({ label, value, onChange, placeholder, hint, type = 'text' }:
   );
 }
 
-function PasswordField({ label, value, onChange, placeholder }: {
+export function PasswordField({ label, value, onChange, placeholder }: {
   label: string;
   value: string;
   onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
@@ -539,7 +349,7 @@ function PasswordField({ label, value, onChange, placeholder }: {
   );
 }
 
-function ErrorBanner({ text }: { text: string }) {
+export function ErrorBanner({ text }: { text: string }) {
   return <div className="bg-[#FFE5E5] border border-[#FFB3B3] p-3 rounded-lg text-[#E74C3C] text-xs font-medium">{text}</div>;
 }
 
@@ -650,7 +460,7 @@ function getPasswordStrength(password: string): { score: number; label: string; 
   return { score, label: 'Strong', color: '#27AE60' };
 }
 
-function PasswordStrengthMeter({ password }: { password: string }) {
+export function PasswordStrengthMeter({ password }: { password: string }) {
   if (!password) return null;
   const { score, label, color } = getPasswordStrength(password);
   return (
