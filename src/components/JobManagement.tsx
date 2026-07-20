@@ -103,8 +103,35 @@ export default function JobManagement({
     }
   };
 
-  // HANDLE SELECT CANDIDATE - REMOVE FROM LIST + ADD TO MATCH CANDIDATES
-  const handleSelectCandidate = (candidate: Candidate, score: number, matchIndex: number) => {
+  // Persists a select/reject decision via the same POST /api/swipes endpoint the "Match
+  // Candidates" swipe queue already uses - recruiter_id/company_id are derived server-side from
+  // the session, never sent from here. Returns true on success so callers only update local UI
+  // state (remove from list, toast) once the decision is actually saved, not optimistically.
+  const persistDecision = async (candidateId: number, action: 0 | 0.5 | 1): Promise<boolean> => {
+    if (!activeJobDetails) return false;
+    try {
+      const res = await apiFetch('/api/swipes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ job_id: activeJobDetails.id, candidate_id: candidateId, action }),
+      });
+      return res.ok;
+    } catch (e) {
+      console.error('Failed to persist candidate decision:', e);
+      return false;
+    }
+  };
+
+  // HANDLE SELECT CANDIDATE - Select shortlists the candidate for review in AI Match Candidates
+  // (action=0.5, the existing "Saved" status) - it is NOT a final Accept, which only happens
+  // inside AI Match Candidates itself. PERSIST, THEN REMOVE FROM LIST + ADD TO MATCH CANDIDATES.
+  const handleSelectCandidate = async (candidate: Candidate, score: number, matchIndex: number) => {
+    const saved = await persistDecision(candidate.id, 0.5);
+    if (!saved) {
+      showRejectToastFn(`Failed to save selection for ${candidate.name}. Please try again.`);
+      return;
+    }
+
     // Mark as selected
     setSelectedCandidateIds([...selectedCandidateIds, candidate.id]);
 
@@ -124,7 +151,7 @@ export default function JobManagement({
     // Add to selected candidates
     const updatedList = [...localSelectedCandidates, newCandidate];
     setLocalSelectedCandidates(updatedList);
-    
+
     // Update parent state
     if (setSelectedCandidatesList) {
       setSelectedCandidatesList(updatedList);
@@ -138,10 +165,15 @@ export default function JobManagement({
     showSelectToast(`✅ ${candidate.name} selected!`);
   };
 
-  // HANDLE REJECT CANDIDATE - REMOVE FROM LIST + SHOW TOAST
-  const handleRejectCandidate = (candidateName: string, matchIndex: number) => {
+  // HANDLE REJECT CANDIDATE - Job Positions is a pre-screening stage only; Reject here does NOT
+  // record a final decision (that only happens via Accept/Reject inside AI Match Candidates
+  // after detailed review). This is a session-local dismissal from the ranked list only -
+  // nothing is persisted to swipes, so the candidate isn't excluded from future ranked views.
+  const handleRejectCandidate = async (candidateName: string, matchIndex: number) => {
+    const candidateId = matchedCandidates[matchIndex].candidate.id;
+
     // Mark as rejected
-    setRejectedCandidateIds([...rejectedCandidateIds, matchedCandidates[matchIndex].candidate.id]);
+    setRejectedCandidateIds([...rejectedCandidateIds, candidateId]);
 
     // Remove from current list
     const updatedMatches = matchedCandidates.filter((_, idx) => idx !== matchIndex);

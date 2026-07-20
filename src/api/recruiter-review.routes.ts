@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { db } from '../db.js';
 import { calculateMatchScore } from '../services.js';
+import { generateRubricReport } from '../rubric-scoring.service.js';
 import { broadcastEvent } from '../realtime.js';
 import { requireAuth, requireRole } from '../middleware/auth.middleware.js';
 
@@ -95,11 +96,16 @@ router.get('/recruiter-review/:candidateId/:jobId', async (req, res) => {
       return res.status(400).json({ error: 'Invalid candidate or job ID' });
     }
 
-    const detail = await db.getRecruiterReviewDetail(candidateId, jobId, companyId);
+    const [detail, savedReport] = await Promise.all([
+      db.getRecruiterReviewDetail(candidateId, jobId, companyId),
+      db.getDetailedScoringReport(companyId, candidateId, jobId),
+    ]);
     if (!detail) {
       return res.status(404).json({ error: 'Candidate or job not found' });
     }
-    res.json(detail);
+    // Previously generated rubric report, if any - shown immediately with no new Gemini call.
+    // Only generated on an explicit POST .../detailed-score click (see below), never implicitly.
+    res.json({ ...detail, detailedScore: savedReport?.report ?? null, detailedScoreGeneratedAt: savedReport?.generated_at ?? null });
   } catch (error: any) {
     console.error('Failed to load recruiter review detail:', error);
     res.status(500).json({ error: 'Failed to load recruiter review detail: ' + error.message });
@@ -144,6 +150,40 @@ router.post('/recruiter-review/:id/notes', async (req, res) => {
   } catch (error: any) {
     console.error('Failed to save recruiter note:', error);
     res.status(500).json({ error: 'Failed to save recruiter note: ' + error.message });
+  }
+});
+
+// POST /api/recruiter-review/:candidateId/:jobId/detailed-score - generates a fresh rubric
+// report via Gemini (src/rubric-scoring.service.ts), independent of the real matching engine,
+// and persists it (upsert - one row per candidate+job). Only runs on this explicit call, never
+// implicitly when the detail panel is opened.
+router.post('/recruiter-review/:candidateId/:jobId/detailed-score', async (req, res) => {
+  try {
+    const companyId = req.user!.company_id;
+    const candidateId = parseInt(req.params.candidateId);
+    const jobId = parseInt(req.params.jobId);
+    if (isNaN(candidateId) || isNaN(jobId)) {
+      return res.status(400).json({ error: 'Invalid candidate or job ID' });
+    }
+
+    const candidate = await db.getCandidateById(candidateId, companyId);
+    const job = await db.getJobById(jobId, companyId);
+    if (!candidate || !job) {
+      return res.status(404).json({ error: 'Candidate or job not found' });
+    }
+
+    const report = await generateRubricReport(job, candidate);
+    const saved = await db.upsertDetailedScoringReport({
+      companyId, candidateId, jobId, report, generatedBy: req.user!.user_id,
+    });
+    if (!saved) {
+      return res.status(500).json({ error: 'Failed to save the detailed scoring report' });
+    }
+
+    res.json({ detailedScore: saved.report, detailedScoreGeneratedAt: saved.generated_at });
+  } catch (error: any) {
+    console.error('Failed to generate detailed scoring report:', error);
+    res.status(500).json({ error: 'Failed to generate detailed scoring report: ' + error.message });
   }
 });
 

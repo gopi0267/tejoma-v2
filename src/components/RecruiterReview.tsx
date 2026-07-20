@@ -7,7 +7,8 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Search, X, Download, RefreshCw, AlertCircle, CheckCircle2, XCircle, Bookmark,
   TrendingUp, TrendingDown, Target, CalendarDays, CalendarRange, CalendarClock,
-  ChevronLeft, ChevronRight, Eye, FileText, StickyNote, History, Send, Filter
+  ChevronLeft, ChevronRight, Eye, FileText, StickyNote, History, Send, Filter,
+  ClipboardList, Sparkles, ShieldAlert, Lightbulb
 } from 'lucide-react';
 import Papa from 'papaparse';
 import { Job } from '../types.js';
@@ -42,11 +43,32 @@ interface Stats {
   today: number; thisWeek: number; thisMonth: number;
 }
 
+interface RubricFactor {
+  name: string;
+  score: number;
+  maxScore: number;
+  weightPercent: number;
+  resumeEvidence: string;
+  scoringLogic: string;
+}
+
+interface RubricReport {
+  detectedRole: string;
+  factors: RubricFactor[];
+  calculation: string;
+  finalScorePercent: number;
+  interpretation: 'exceptional' | 'strong' | 'good' | 'acceptable' | 'poor';
+  redFlags: string[];
+  recommendations: string[];
+}
+
 interface DetailData {
   candidate: any;
   job: any;
   history: any[];
   note: { note: string } | null;
+  detailedScore: RubricReport | null;
+  detailedScoreGeneratedAt: string | null;
 }
 
 const PAGE_SIZE = 25;
@@ -155,12 +177,15 @@ export default function RecruiterReview() {
   const [decisionReason, setDecisionReason] = useState('');
   const [decisionSaving, setDecisionSaving] = useState(false);
   const [showDecisionForm, setShowDecisionForm] = useState(false);
+  const [rubricGenerating, setRubricGenerating] = useState(false);
+  const [rubricError, setRubricError] = useState('');
 
   const openDetail = async (row: ReviewRow) => {
     setSelected(row);
     setDetail(null);
     setShowDecisionForm(false);
     setDecisionReason('');
+    setRubricError('');
     setDetailLoading(true);
     try {
       const res = await apiFetch(`/api/recruiter-review/${row.candidate_id}/${row.job_id}`);
@@ -171,6 +196,30 @@ export default function RecruiterReview() {
       }
     } finally {
       setDetailLoading(false);
+    }
+  };
+
+  // Separate, on-demand LLM-judged report - independent of the real matching engine above.
+  // Only ever triggered by this explicit click, never on panel open (each generation is a real
+  // Gemini API call, so it's deliberately not automatic).
+  const generateRubricScore = async () => {
+    if (!selected) return;
+    setRubricGenerating(true);
+    setRubricError('');
+    try {
+      const res = await apiFetch(`/api/recruiter-review/${selected.candidate_id}/${selected.job_id}/detailed-score`, {
+        method: 'POST',
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setRubricError(json.error || 'Failed to generate the detailed scoring report.');
+        return;
+      }
+      setDetail((prev) => (prev ? { ...prev, detailedScore: json.detailedScore, detailedScoreGeneratedAt: json.detailedScoreGeneratedAt } : prev));
+    } catch (err: any) {
+      setRubricError(err.message || 'Failed to generate the detailed scoring report.');
+    } finally {
+      setRubricGenerating(false);
     }
   };
 
@@ -575,6 +624,84 @@ export default function RecruiterReview() {
                     </div>
                   );
                 })()}
+
+                {/* Detailed Rubric Scoring Report - separate, on-demand, LLM-judged; independent
+                    of the AI Match Breakdown above (which drives the real swipe-queue score). */}
+                <div className="pt-6 border-t border-slate-100">
+                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-3 flex items-center gap-1">
+                    <ClipboardList className="w-3.5 h-3.5" /> Detailed Rubric Scoring Report
+                  </p>
+
+                  {rubricError && (
+                    <div className="flex items-center gap-2 text-rose-600 bg-rose-50 border border-rose-100 rounded-lg p-3 text-xs mb-3">
+                      <AlertCircle className="w-4 h-4 flex-shrink-0" /> {rubricError}
+                    </div>
+                  )}
+
+                  {detail.detailedScore ? (
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between flex-wrap gap-2">
+                        <div>
+                          <span className="text-[10px] text-slate-500 uppercase tracking-wide font-bold">Detected Role</span>
+                          <p className="text-sm font-semibold text-slate-800">{detail.detailedScore.detectedRole}</p>
+                        </div>
+                        <div className={`px-3 py-1.5 rounded-lg font-mono font-bold text-sm ${scoreBadgeClass(detail.detailedScore.finalScorePercent)}`}>
+                          {detail.detailedScore.finalScorePercent}% - {detail.detailedScore.interpretation}
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                        {detail.detailedScore.factors.map((f, idx) => (
+                          <div key={idx} className="bg-slate-50 rounded-lg p-3 space-y-1">
+                            <div className="flex items-center justify-between">
+                              <span className="font-semibold text-slate-700">{f.name}</span>
+                              <span className="font-mono font-bold text-slate-800">{f.score}/{f.maxScore} ({f.weightPercent}%)</span>
+                            </div>
+                            <p className="text-slate-500"><span className="font-semibold text-slate-600">Evidence:</span> {f.resumeEvidence}</p>
+                            <p className="text-slate-400">{f.scoringLogic}</p>
+                          </div>
+                        ))}
+                      </div>
+
+                      <p className="text-[10px] text-slate-400 font-mono">{detail.detailedScore.calculation}</p>
+
+                      {detail.detailedScore.redFlags.length > 0 && (
+                        <div className="bg-rose-50 border border-rose-100 rounded-lg p-3">
+                          <p className="text-[10px] font-bold text-rose-700 uppercase tracking-wide mb-1.5 flex items-center gap-1"><ShieldAlert className="w-3.5 h-3.5" /> Red Flags</p>
+                          <ul className="text-xs text-rose-700 space-y-1 list-disc list-inside">
+                            {detail.detailedScore.redFlags.map((r, idx) => <li key={idx}>{r}</li>)}
+                          </ul>
+                        </div>
+                      )}
+
+                      {detail.detailedScore.recommendations.length > 0 && (
+                        <div className="bg-indigo-50 border border-indigo-100 rounded-lg p-3">
+                          <p className="text-[10px] font-bold text-indigo-700 uppercase tracking-wide mb-1.5 flex items-center gap-1"><Lightbulb className="w-3.5 h-3.5" /> Recommendations</p>
+                          <ul className="text-xs text-indigo-700 space-y-1 list-disc list-inside">
+                            {detail.detailedScore.recommendations.map((r, idx) => <li key={idx}>{r}</li>)}
+                          </ul>
+                        </div>
+                      )}
+
+                      <div className="flex items-center justify-between">
+                        {detail.detailedScoreGeneratedAt && (
+                          <span className="text-[10px] text-slate-400">Generated {new Date(detail.detailedScoreGeneratedAt).toLocaleString()}</span>
+                        )}
+                        <button onClick={generateRubricScore} disabled={rubricGenerating} className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600 hover:text-slate-900 cursor-pointer disabled:opacity-50">
+                          <RefreshCw className={`w-3 h-3 ${rubricGenerating ? 'animate-spin' : ''}`} /> {rubricGenerating ? 'Regenerating...' : 'Regenerate'}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={generateRubricScore}
+                      disabled={rubricGenerating}
+                      className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm shadow-indigo-100 cursor-pointer disabled:opacity-50"
+                    >
+                      <Sparkles className={`w-4 h-4 ${rubricGenerating ? 'animate-pulse' : ''}`} /> {rubricGenerating ? 'Generating report...' : 'Generate Detailed Scoring Report'}
+                    </button>
+                  )}
+                </div>
 
                 {/* Recruiter notes */}
                 <div className="pt-6 border-t border-slate-100">

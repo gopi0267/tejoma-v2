@@ -990,6 +990,38 @@ export async function createJob(job: Omit<Job, 'id' | 'created_at' | 'updated_at
   }
 }
 
+export async function updateJob(id: number, companyId: number, updates: Partial<Job>): Promise<Job | null> {
+  try {
+    const fields: string[] = [];
+    const values: any[] = [];
+    let paramIndex = 1;
+
+    for (const [key, value] of Object.entries(updates)) {
+      if (value !== undefined && key !== 'id' && key !== 'company_id') {
+        fields.push(`${key} = $${paramIndex}`);
+        let mappedValue: any = value;
+        if (key === 'tech_stack' || key === 'parse_confidence') mappedValue = JSON.stringify(value ?? {});
+        values.push(mappedValue);
+        paramIndex++;
+      }
+    }
+
+    if (fields.length === 0) return getJobById(id, companyId);
+
+    fields.push(`updated_at = CURRENT_TIMESTAMP`);
+    values.push(id, companyId);
+
+    const result = await pool.query(
+      `UPDATE jobs SET ${fields.join(', ')} WHERE id = $${paramIndex} AND company_id = $${paramIndex + 1} RETURNING *`,
+      values
+    );
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error('Error updating job:', error);
+    return null;
+  }
+}
+
 export async function updateJobEmbedding(id: number, embedding: number[]): Promise<void> {
   try {
     await pool.query('UPDATE jobs SET description_embedding = $1 WHERE id = $2', [embedding, id]);
@@ -1343,6 +1375,29 @@ export async function getRecruiterReviewList(companyId: number, filters: Recruit
   }
 }
 
+// Candidates whose LATEST swipe for this job is 0.5 ("Saved") - i.e. shortlisted from Job
+// Positions' Select button (or SwipeInterface's own "Save for later" gesture) but not yet
+// finalized to Accepted/Rejected. Powers the AI Match Candidates queue's shortlist-only filter -
+// see GET /api/matches/queue/:job_id.
+export async function getShortlistedCandidateIds(jobId: number, companyId: number): Promise<Set<number>> {
+  try {
+    const result = await pool.query(
+      `SELECT candidate_id FROM (
+         SELECT DISTINCT ON (candidate_id, job_id) candidate_id, action
+         FROM swipes
+         WHERE company_id = $1 AND job_id = $2
+         ORDER BY candidate_id, job_id, timestamp DESC, id DESC
+       ) latest
+       WHERE latest.action = 0.5`,
+      [companyId, jobId]
+    );
+    return new Set(result.rows.map((r) => r.candidate_id));
+  } catch (error) {
+    console.error('Error fetching shortlisted candidate ids:', error);
+    return new Set();
+  }
+}
+
 export async function getRecruiterReviewDetail(candidateId: number, jobId: number, companyId: number): Promise<{
   candidate: Candidate | null;
   job: Job | null;
@@ -1428,6 +1483,43 @@ export async function upsertRecruiterNote(params: { companyId: number; candidate
     return result.rows[0] || null;
   } catch (error) {
     console.error('Error upserting recruiter note:', error);
+    return null;
+  }
+}
+
+// ==================== DETAILED RUBRIC SCORING REPORT ====================
+// A separate, on-demand, LLM-judged report - one row per (company, candidate, job), upserted on
+// regenerate. See src/rubric-scoring.service.ts. Not tied to the swipes/match_scores tables at
+// all - entirely independent of the real matching engine.
+
+export async function upsertDetailedScoringReport(params: {
+  companyId: number; candidateId: number; jobId: number; report: unknown; generatedBy: number;
+}): Promise<{ report: unknown; generated_at: string } | null> {
+  try {
+    const result = await pool.query(
+      `INSERT INTO detailed_scoring_reports (company_id, candidate_id, job_id, report, generated_by)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (company_id, candidate_id, job_id)
+       DO UPDATE SET report = $4, generated_by = $5, generated_at = CURRENT_TIMESTAMP
+       RETURNING report, generated_at`,
+      [params.companyId, params.candidateId, params.jobId, JSON.stringify(params.report), params.generatedBy]
+    );
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error('Error upserting detailed scoring report:', error);
+    return null;
+  }
+}
+
+export async function getDetailedScoringReport(companyId: number, candidateId: number, jobId: number): Promise<{ report: unknown; generated_at: string } | null> {
+  try {
+    const result = await pool.query(
+      `SELECT report, generated_at FROM detailed_scoring_reports WHERE company_id = $1 AND candidate_id = $2 AND job_id = $3`,
+      [companyId, candidateId, jobId]
+    );
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error('Error fetching detailed scoring report:', error);
     return null;
   }
 }
@@ -1977,6 +2069,7 @@ export const db = {
   getJobs,
   getJobById,
   createJob,
+  updateJob,
   deleteJob,
   updateJobStatus,
   updateJobEmbedding,
@@ -1996,8 +2089,11 @@ export const db = {
   getSwipeById,
   getRecruiterReviewList,
   getRecruiterReviewDetail,
+  getShortlistedCandidateIds,
   getRecruiterReviewStats,
   upsertRecruiterNote,
+  upsertDetailedScoringReport,
+  getDetailedScoringReport,
   getAnalyticsDashboardStats,
   getJobAnalyticsCounts,
   getJobSwipeCounts,

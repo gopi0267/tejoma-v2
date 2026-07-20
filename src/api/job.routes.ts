@@ -125,8 +125,40 @@ router.get('/jobs/:id', async (req, res) => {
 });
   
 router.put('/jobs/:id', async (req, res) => {
-    const id = parseInt(req.params.id);
-    res.json({ id, ...req.body });
+    try {
+      const companyId = req.user!.company_id;
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) {
+        return res.status(400).json({ error: 'Invalid job ID' });
+      }
+
+      const { title, description, required_skills, experience_years, location, salary_min, salary_max, status } = req.body;
+
+      const updated = await db.updateJob(id, companyId, {
+        title,
+        description,
+        required_skills: required_skills !== undefined ? toStringArray(required_skills) : undefined,
+        experience_years,
+        location,
+        salary_min,
+        salary_max,
+        status,
+      });
+      if (!updated) {
+        return res.status(404).json({ error: 'Job not found' });
+      }
+
+      // Keep the RAG knowledge base and match-embedding in sync with the edited title/
+      // description/skills - same background indexing already done on job creation, otherwise
+      // the chatbot and semantic matching would silently keep using stale pre-edit content.
+      indexJobInBackground(updated);
+      indexJobEmbeddingInBackground(updated);
+
+      res.json(updated);
+    } catch (error: any) {
+      console.error('Failed to update job:', error);
+      res.status(500).json({ error: 'Failed to update job: ' + error.message });
+    }
 });
   
 router.delete('/jobs/:id', async (req, res) => {

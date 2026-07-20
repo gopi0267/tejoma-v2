@@ -21,20 +21,22 @@ router.get('/matches/queue/:job_id', async (req, res) => {
         return res.status(404).json({ error: 'Job not found' });
       }
 
-      const swipes = await db.getSwipes(companyId);
-      const swipedCandidateIds = new Set(swipes.filter(s => s.job_id === job_id).map(s => s.candidate_id));
+      // Shortlist-only queue: only candidates Selected in Job Positions (or Saved from within
+      // this deck) whose latest decision for this job is still "Saved" (action=0.5) - i.e. not
+      // yet finalized to Accepted/Rejected. See db.getShortlistedCandidateIds.
+      const shortlistedIds = await db.getShortlistedCandidateIds(job_id, companyId);
 
       const candidates = await db.getCandidates(companyId);
-      const unswipedCandidates = candidates.filter(c => !swipedCandidateIds.has(c.id));
-  
-      if (unswipedCandidates.length === 0) {
+      const queueCandidates = candidates.filter(c => shortlistedIds.has(c.id));
+
+      if (queueCandidates.length === 0) {
         return res.json({ candidate: null, remaining: 0 });
       }
-  
-      // Batched: one round-trip to the ML ensemble for every unreviewed candidate, not one per
+
+      // Batched: one round-trip to the ML ensemble for every shortlisted candidate, not one per
       // candidate.
-      const scores = await calculateMatchScoresBatch(job, unswipedCandidates, { skipGeminiSummary: true });
-      const scoredCandidates = unswipedCandidates.map((candidate, i) => ({
+      const scores = await calculateMatchScoresBatch(job, queueCandidates, { skipGeminiSummary: true });
+      const scoredCandidates = queueCandidates.map((candidate, i) => ({
         candidate,
         match_score: scores[i].final_score,
         breakdown: scores[i].breakdown,
@@ -132,6 +134,15 @@ router.post('/swipes', async (req, res) => {
         decision_time_seconds: typeof decision_time_seconds === 'number' && isFinite(decision_time_seconds) ? decision_time_seconds : null,
       });
 
+      // db.recordSwipe catches its own DB errors internally and returns null on failure rather
+      // than throwing (e.g. the swipes.action column once silently rejected 0.5 - see
+      // migration-swipes-action-numeric.sql) - without this check the route fell through to a
+      // 201 success response regardless, which is exactly how that bug went undetected.
+      if (!savedSwipe) {
+        console.error('❌ SWIPE SAVE FAILED: recordSwipe returned null', { recruiter_id, job_id, candidate_id, action });
+        return res.status(500).json({ error: 'Failed to save swipe decision. Please try again.' });
+      }
+
       console.log('✅ SWIPE SAVED:', savedSwipe);
 
       broadcastEvent('swipe-completed', {
@@ -149,21 +160,20 @@ router.post('/swipes', async (req, res) => {
       // never PII), even though the swipe/candidate/job data itself is tenant-scoped.
       trainModelOnStartup().catch((err) => logger.warn({ err: err.message }, 'Background retrain after swipe failed'));
 
-      // GET NEXT CANDIDATE
-      const swipes = await db.getSwipes(companyId);
-      console.log('📊 TOTAL SWIPES IN DB:', swipes.length);
-
-      const swipedCandidateIds = new Set(swipes.filter(s => s.job_id === job.id).map(s => s.candidate_id));
+      // GET NEXT CANDIDATE - next still-shortlisted-and-pending candidate for this job (the
+      // swipe just recorded above already moved `candidate` off the shortlist if it was a final
+      // Accept/Reject, since getShortlistedCandidateIds only reads the latest row per pair).
+      const shortlistedIds = await db.getShortlistedCandidateIds(job.id, companyId);
       const allCandidates = await db.getCandidates(companyId);
-      const unswipedCandidates = allCandidates.filter(c => !swipedCandidateIds.has(c.id));
+      const queueCandidates = allCandidates.filter(c => shortlistedIds.has(c.id));
 
-      console.log('👥 UNREVIEWED:', unswipedCandidates.length, 'of', allCandidates.length);
+      console.log('👥 SHORTLISTED PENDING:', queueCandidates.length, 'of', allCandidates.length);
 
       let next_candidate = null;
-      if (unswipedCandidates.length > 0) {
-        // Batched: one round-trip to the ML ensemble for every unreviewed candidate.
-        const scores = await calculateMatchScoresBatch(job, unswipedCandidates, { skipGeminiSummary: true });
-        const scored = unswipedCandidates.map((c, i) => ({ candidate: c, score: scores[i].final_score, breakdown: scores[i].breakdown, summary: scores[i].summary }));
+      if (queueCandidates.length > 0) {
+        // Batched: one round-trip to the ML ensemble for every shortlisted candidate.
+        const scores = await calculateMatchScoresBatch(job, queueCandidates, { skipGeminiSummary: true });
+        const scored = queueCandidates.map((c, i) => ({ candidate: c, score: scores[i].final_score, breakdown: scores[i].breakdown, summary: scores[i].summary }));
         scored.sort((a, b) => b.score - a.score);
 
         const top = scored[0];
