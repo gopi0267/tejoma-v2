@@ -26,7 +26,7 @@ const upload = multer({
 });
 
 // Helper function to extract text from various file formats
-async function extractTextFromFile(filePath: string, originalName: string): Promise<string> {
+export async function extractTextFromFile(filePath: string, originalName: string): Promise<string> {
   const extension = path.extname(originalName).toLowerCase();
   const fileBuffer = fs.readFileSync(filePath);
 

@@ -10,8 +10,12 @@ import {
     trainModelOnStartup,
 } from '../services.js';
 import { getEnsembleHealth } from '../algorithms/ml-models.js';
+import { getRankerHealth } from '../algorithms/ltr-models.js';
+import { trainLearningToRank } from '../matching/learningToRank.js';
+import { runAndSaveEvaluation, DEFAULT_K } from '../matching/evaluation.js';
 import { broadcastEvent } from '../realtime.js';
 import { requireAuth, requireRole } from '../middleware/auth.middleware.js';
+import { logger } from '../utils/logger.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -70,6 +74,58 @@ router.get('/ml/model/status', requireRole('recruiter', 'admin'), async (req, re
 
 router.get('/ml/model/versions', requireRole('recruiter', 'admin'), (req, res) => {
     res.json([]);
+});
+
+// ==================== LEARNING-TO-RANK (Phase 3) ====================
+// Fully isolated from the routes above - trains/reports on the new XGBRanker/LGBMRanker
+// capability (src/matching/learningToRank.ts), never reads or writes activeModelType/
+// isRetrainingInProgress/lastTrainingTimestamp (those belong to the production classification
+// ensemble only), and is never called by any live scoring route.
+router.post('/ml/train/ranking', requireRole('admin'), async (req, res) => {
+    try {
+      const result = await trainLearningToRank();
+      broadcastEvent('ranking-model-trained', result);
+      res.json(result);
+    } catch (error: any) {
+      logger.error({ err: error.message }, 'Learning-to-Rank training failed');
+      res.status(500).json({ error: 'Failed to train Learning-to-Rank ensemble: ' + error.message });
+    }
+});
+
+router.get('/ml/ranking/status', requireRole('recruiter', 'admin'), async (req, res) => {
+    const [health, latestVersion] = await Promise.all([getRankerHealth(), db.getLatestLtrModelVersion()]);
+    res.json({
+      ranker_trained: health?.rankerTrained ?? false,
+      trained_example_count: health?.rankerTrainedExampleCount ?? 0,
+      trained_group_count: health?.rankerTrainedGroupCount ?? 0,
+      ml_service_reachable: health !== null,
+      latest_version: latestVersion,
+      // Explicit, not implied by absence of an error - this capability does not affect what any
+      // recruiter/candidate currently sees.
+      wired_into_live_scoring: false,
+    });
+});
+
+// ==================== EVALUATION FRAMEWORK (Phase 3) ====================
+router.post('/ml/evaluate', requireRole('admin'), async (req, res) => {
+    try {
+      const companyId = req.user!.company_id;
+      const k = Number.isFinite(Number(req.body?.k)) && Number(req.body?.k) > 0 ? Number(req.body.k) : DEFAULT_K;
+      const run = await runAndSaveEvaluation(companyId, k);
+      if (!run) {
+        return res.status(500).json({ error: 'Failed to save evaluation run' });
+      }
+      res.json(run);
+    } catch (error: any) {
+      logger.error({ err: error.message }, 'Ranking evaluation failed');
+      res.status(500).json({ error: 'Failed to run evaluation: ' + error.message });
+    }
+});
+
+router.get('/ml/evaluate/history', requireRole('recruiter', 'admin'), async (req, res) => {
+    const companyId = req.user!.company_id;
+    const runs = await db.getEvaluationRuns(companyId);
+    res.json(runs);
 });
 
 export default router;

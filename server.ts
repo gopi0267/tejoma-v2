@@ -17,6 +17,7 @@ import { globalLimiter, authLimiter } from './src/middleware/rateLimit.middlewar
 import { errorHandler } from './src/middleware/error.middleware.js';
 import { registry, metricsMiddleware } from './src/utils/metrics.js';
 import { db } from './src/db.js';
+import { closeRetrainQueue } from './src/queue/retrainQueue.js';
 
 const app = express();
 const PORT = 3006;
@@ -151,6 +152,7 @@ async function startServer() {
     shuttingDown = true;
     console.log(`${signal} received, shutting down gracefully...`);
     server.close(async () => {
+      await closeRetrainQueue();
       await db.closeConnection();
       console.log('Shutdown complete.');
       process.exit(0);

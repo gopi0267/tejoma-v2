@@ -14,8 +14,10 @@ import Dashboard from './components/Dashboard.js';
 import SwipeInterface from './components/SwipeInterface.js';
 import JobManagement from './components/JobManagement.js';
 import CandidateManagement from './components/CandidateManagement.js';
+import CandidateSearch from './components/CandidateSearch.js';
 import Analytics from './components/Analytics.js';
 import RecruiterReview from './components/RecruiterReview.js';
+import RecruiterMatches from './components/RecruiterMatches.js';
 import UserManagement from './components/UserManagement.js';
 import TenantRequests from './components/TenantRequests.js';
 import TejomaLogo from './components/TejomaLogo.js';
@@ -47,8 +49,8 @@ export default function App() {
   const [newJobSkills, setNewJobSkills] = useState('');
   const [newJobExp, setNewJobExp] = useState(3);
   const [newJobLocation, setNewJobLocation] = useState('Austin, TX');
-  const [newJobSalMin, setNewJobSalMin] = useState(60000);
-  const [newJobSalMax, setNewJobSalMax] = useState(130000);
+  const [newJobSalMin, setNewJobSalMin] = useState(600000);
+  const [newJobSalMax, setNewJobSalMax] = useState(1300000);
 
   // Paste-JD auto-fill: parses free-text into the fields above (plus the extra JD-parser fields
   // below, which aren't shown as individual inputs in this compact modal but are still sent to
@@ -308,6 +310,9 @@ export default function App() {
           {activeTab === 'recruiter-review' && (
             <RecruiterReview />
           )}
+          {activeTab === 'matches' && (
+            <RecruiterMatches />
+          )}
           {activeTab === 'jobs' && (
             <JobManagement 
               jobs={jobs} 
@@ -318,10 +323,13 @@ export default function App() {
             />
           )}
           {activeTab === 'candidates' && (
-            <CandidateManagement 
-              candidates={candidates} 
-              fetchCandidates={fetchCoreTelemetry} 
+            <CandidateManagement
+              candidates={candidates}
+              fetchCandidates={fetchCoreTelemetry}
             />
+          )}
+          {activeTab === 'candidate-search' && (
+            <CandidateSearch />
           )}
           {activeTab === 'analytics' && (
             <Analytics />
@@ -455,7 +463,7 @@ export default function App() {
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-slate-500 font-bold mb-1.5 uppercase tracking-wider text-[9px]">Salary Floor ($)</label>
+                  <label className="block text-slate-500 font-bold mb-1.5 uppercase tracking-wider text-[9px]">Salary Floor (₹)</label>
                   <input
                     type="number"
                     required
@@ -465,7 +473,7 @@ export default function App() {
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-500 font-bold mb-1.5 uppercase tracking-wider text-[9px]">Salary Ceiling ($)</label>
+                  <label className="block text-slate-500 font-bold mb-1.5 uppercase tracking-wider text-[9px]">Salary Ceiling (₹)</label>
                   <input
                     type="number"
                     required

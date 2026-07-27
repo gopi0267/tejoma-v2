@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import bcrypt from 'bcrypt';
+import { OAuth2Client } from 'google-auth-library';
 import { db } from '../db.js';
 import { generateOTP, hashOTP, compareOTP, normalizeIdentifier } from '../utils/otp.js';
 import { sendOTPEmail } from '../utils/email.js';
@@ -33,6 +34,22 @@ async function isPasswordReused(userId: number, newPassword: string): Promise<bo
 const OTP_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const OTP_RESEND_COOLDOWN_MS = 60 * 1000; // 60 seconds between requests for the same identifier
 const OTP_MAX_REQUESTS_PER_HOUR = 5;
+
+// Recruiter/staff Google sign-in reuses the same Google Cloud OAuth client as the candidate
+// portal (candidate-auth.routes.ts) but needs its own registered redirect URI, since it lands
+// on a different callback route - both must be added under the one client's "Authorized redirect
+// URIs" in Google Cloud Console. Optional - if unset, /google responds with a clear redirect
+// instead of crashing, and the client-side "Continue with Google" button always renders.
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
+const STAFF_GOOGLE_REDIRECT_URI = process.env.STAFF_GOOGLE_REDIRECT_URI || '';
+const staffGoogleOAuthConfigured = Boolean(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET && STAFF_GOOGLE_REDIRECT_URI);
+const staffGoogleClient = staffGoogleOAuthConfigured
+  ? new OAuth2Client(GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, STAFF_GOOGLE_REDIRECT_URI)
+  : null;
+if (!staffGoogleOAuthConfigured) {
+  console.warn('GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET/STAFF_GOOGLE_REDIRECT_URI not set - recruiter Google sign-in is disabled (button will show a friendly error).');
+}
 
 function toUserInfo(user: any) {
   return { id: user.id, name: user.name, email: user.email || '', role: user.role };
@@ -276,6 +293,66 @@ router.post('/auth/login', async (req, res) => {
   } catch (error) {
     console.error('Login error:', error);
     res.status(500).json({ error: 'Login failed' });
+  }
+});
+
+// ==================== GOOGLE OAUTH: START ====================
+router.get('/auth/google', (req, res) => {
+  if (!staffGoogleClient) {
+    return res.redirect('/?auth_error=google_not_configured');
+  }
+  const url = staffGoogleClient.generateAuthUrl({
+    access_type: 'online',
+    scope: ['openid', 'email', 'profile'],
+    prompt: 'select_account',
+  });
+  res.redirect(url);
+});
+
+// ==================== GOOGLE OAUTH: CALLBACK ====================
+// Unlike the candidate portal, sign-in never auto-provisions a new account here: a `users` row
+// requires a company_id (NOT NULL, FK to companies), and there is no sensible company to assign
+// an unrecognized Google email to - that would mean silently spinning up a new company with no
+// name/plan/setup. Recruiters must exist already (created directly, via admin invite, or via
+// "Register your company") before Google sign-in will work for them; an unmatched email gets a
+// clear, actionable error instead.
+router.get('/auth/google/callback', async (req, res) => {
+  if (!staffGoogleClient) {
+    return res.redirect('/?auth_error=google_not_configured');
+  }
+  try {
+    const code = req.query.code as string | undefined;
+    if (!code) {
+      return res.redirect('/?auth_error=google_auth_failed');
+    }
+
+    const { tokens } = await staffGoogleClient.getToken(code);
+    if (!tokens.id_token) {
+      return res.redirect('/?auth_error=google_auth_failed');
+    }
+
+    // Identity comes only from Google's verified ID token - never from request body/query.
+    const ticket = await staffGoogleClient.verifyIdToken({ idToken: tokens.id_token, audience: GOOGLE_CLIENT_ID });
+    const payload = ticket.getPayload();
+    if (!payload || !payload.email) {
+      return res.redirect('/?auth_error=google_auth_failed');
+    }
+
+    const email = payload.email.toLowerCase();
+    const user = await db.getUserByEmail(email);
+    if (!user) {
+      return res.redirect('/?auth_error=google_no_account');
+    }
+    if (!user.is_active || user.deleted_at) {
+      return res.redirect('/?auth_error=account_deactivated');
+    }
+
+    await issueSession(req, res, user, true);
+    db.updateLastLogin(user.id).catch((err) => console.error('Failed to record last login:', err));
+    res.redirect('/');
+  } catch (error) {
+    console.error('Staff Google auth error:', error);
+    res.redirect('/?auth_error=google_auth_failed');
   }
 });
 

@@ -1,9 +1,11 @@
 import { Router } from 'express';
 import { db } from '../db.js';
-import { calculateMatchScore, calculateMatchScoresBatch, trainModelOnStartup } from '../services.js';
+import { calculateMatchScore } from '../services.js';
+import { enqueueRetrain } from '../queue/retrainQueue.js';
 import { logger } from '../utils/logger.js';
 import { broadcastEvent } from '../realtime.js';
 import { requireAuth, requireRole } from '../middleware/auth.middleware.js';
+import { rankCandidatesForJob } from '../matching/matchingApi.js';
 
 const router = Router();
 router.use(requireAuth, requireRole('recruiter', 'admin'));
@@ -26,25 +28,28 @@ router.get('/matches/queue/:job_id', async (req, res) => {
       // yet finalized to Accepted/Rejected. See db.getShortlistedCandidateIds.
       const shortlistedIds = await db.getShortlistedCandidateIds(job_id, companyId);
 
-      const candidates = await db.getCandidates(companyId);
-      const queueCandidates = candidates.filter(c => shortlistedIds.has(c.id));
+      // Fetches only the shortlisted rows directly (WHERE id = ANY(...)) instead of pulling
+      // every one of the company's candidates into memory and filtering in JS - same result,
+      // scales with shortlist size instead of total company candidate count.
+      const queueCandidates = await db.getCandidatesByIds([...shortlistedIds], companyId);
 
       if (queueCandidates.length === 0) {
         return res.json({ candidate: null, remaining: 0 });
       }
 
-      // Batched: one round-trip to the ML ensemble for every shortlisted candidate, not one per
-      // candidate.
-      const scores = await calculateMatchScoresBatch(job, queueCandidates, { skipGeminiSummary: true });
-      const scoredCandidates = queueCandidates.map((candidate, i) => ({
+      // Unified Matching API, 'full' tier - the exact same calculateMatchScoresBatch pipeline
+      // this endpoint already called directly (Enterprise AI Matching Architecture, Phase 0).
+      const ranked = await rankCandidatesForJob(job, queueCandidates, {
+        tier: 'full',
+        skipGeminiSummary: true,
+        persist: { companyId, source: 'swipe_queue' },
+      });
+      const scoredCandidates = ranked.map(({ candidate, match_score, score }) => ({
         candidate,
-        match_score: scores[i].final_score,
-        breakdown: scores[i].breakdown,
-        summary: scores[i].summary,
+        match_score,
+        breakdown: score!.breakdown,
+        summary: score!.summary,
       }));
-
-      // Sort by score descending
-      scoredCandidates.sort((a, b) => b.match_score - a.match_score);
 
       const topCandidate = scoredCandidates[0];
       res.json({
@@ -154,11 +159,13 @@ router.post('/swipes', async (req, res) => {
       });
 
       // Retrain the matching ensemble in the background - every swipe is a fresh labeled
-      // example, and training on the small dataset this app currently has is cheap. Never
-      // blocks the swipe response; a slow/failed retrain must not break the swipe UX.
-      // Training stays pooled across all companies (it only ever sees numeric feature vectors,
-      // never PII), even though the swipe/candidate/job data itself is tenant-scoped.
-      trainModelOnStartup().catch((err) => logger.warn({ err: err.message }, 'Background retrain after swipe failed'));
+      // example. Never blocks the swipe response; a slow/failed/skipped retrain must not break
+      // the swipe UX. Enterprise AI Matching Architecture, Phase 3 - queued via BullMQ/Redis when
+      // available, safely skipped with logging (not run synchronously) when it is not - see
+      // src/queue/retrainQueue.ts. Training itself stays pooled across all companies (it only
+      // ever sees numeric feature vectors, never PII), even though swipe/candidate/job data is
+      // tenant-scoped.
+      enqueueRetrain().catch((err) => logger.warn({ err: err.message }, 'Failed to enqueue background retrain after swipe'));
 
       // GET NEXT CANDIDATE - next still-shortlisted-and-pending candidate for this job (the
       // swipe just recorded above already moved `candidate` off the shortlist if it was a final
@@ -171,18 +178,20 @@ router.post('/swipes', async (req, res) => {
 
       let next_candidate = null;
       if (queueCandidates.length > 0) {
-        // Batched: one round-trip to the ML ensemble for every shortlisted candidate.
-        const scores = await calculateMatchScoresBatch(job, queueCandidates, { skipGeminiSummary: true });
-        const scored = queueCandidates.map((c, i) => ({ candidate: c, score: scores[i].final_score, breakdown: scores[i].breakdown, summary: scores[i].summary }));
-        scored.sort((a, b) => b.score - a.score);
-
-        const top = scored[0];
+        // Unified Matching API, 'full' tier - the exact same calculateMatchScoresBatch pipeline
+        // this endpoint already called directly (Enterprise AI Matching Architecture, Phase 0).
+        const ranked = await rankCandidatesForJob(job, queueCandidates, {
+          tier: 'full',
+          skipGeminiSummary: true,
+          persist: { companyId },
+        });
+        const top = ranked[0];
         next_candidate = {
           candidate: top.candidate,
-          match_score: top.score,
-          breakdown: top.breakdown,
-          summary: top.summary,
-          remaining: scored.length
+          match_score: top.match_score,
+          breakdown: top.score!.breakdown,
+          summary: top.score!.summary,
+          remaining: ranked.length
         };
       }
 

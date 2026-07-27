@@ -11,6 +11,40 @@ import CompanyRegistration from './CompanyRegistration.js';
 
 type AuthMode = 'login' | 'company-registration' | 'forgot-identifier' | 'forgot-otp' | 'forgot-reset';
 
+function GoogleIcon() {
+  return (
+    <svg viewBox="0 0 48 48" className="w-4 h-4" aria-hidden="true">
+      <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z" />
+      <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.9-2.26 5.36-4.78 7.01l7.73 6c4.51-4.16 7.09-10.29 7.09-17.48z" />
+      <path fill="#FBBC05" d="M10.53 28.59A14.5 14.5 0 0 1 9.5 24c0-1.59.27-3.13.76-4.59l-7.98-6.19A23.94 23.94 0 0 0 0 24c0 3.87.92 7.53 2.56 10.78l7.97-6.19z" />
+      <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.9-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.17 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.97 6.19C6.51 42.62 14.62 48 24 48z" />
+    </svg>
+  );
+}
+
+// Same Google OAuth entry point pattern as the candidate portal's GoogleButton (CandidateAuth.tsx),
+// hitting the recruiter-side /api/auth/google route instead.
+function GoogleButton() {
+  return (
+    <a
+      href="/api/auth/google"
+      className="w-full bg-white hover:bg-[#F8F8F8] active:bg-[#F0F0F0] text-[#1A1A1A] text-sm font-semibold py-3 rounded-full transition-colors flex items-center justify-center gap-2.5 cursor-pointer border border-[#E0E0E0]"
+    >
+      <GoogleIcon /> Continue with Google
+    </a>
+  );
+}
+
+function OrDivider() {
+  return (
+    <div className="flex items-center gap-3">
+      <div className="flex-1 h-px bg-[#E0E0E0]" />
+      <span className="text-[11px] text-[#999999] font-semibold uppercase tracking-wider">or</span>
+      <div className="flex-1 h-px bg-[#E0E0E0]" />
+    </div>
+  );
+}
+
 async function postJson(url: string, body: any) {
   const res = await fetch(url, {
     method: 'POST',
@@ -41,6 +75,23 @@ export default function Login() {
   const [forgotNewPassword, setForgotNewPassword] = useState('');
   const [forgotConfirmPassword, setForgotConfirmPassword] = useState('');
   const [forgotDone, setForgotDone] = useState(false);
+
+  // The Google OAuth callback is a full server redirect back to / (not a fetch this component
+  // makes), so a failure surfaces as a query param rather than a caught exception - same pattern
+  // as the candidate portal's CandidateAuth.tsx.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const authError = params.get('auth_error');
+    if (!authError) return;
+    const messages: Record<string, string> = {
+      google_not_configured: 'Google sign-in is not available right now. Please use email/phone instead.',
+      google_auth_failed: 'Google sign-in failed. Please try again or use email/phone.',
+      google_no_account: 'No recruiter account found for this Google email. Register your company, or ask your admin to invite you first.',
+      account_deactivated: 'This account has been deactivated.',
+    };
+    setError(messages[authError] || 'Google sign-in failed. Please try again.');
+    window.history.replaceState(null, '', window.location.pathname);
+  }, []);
 
   const resetToLogin = () => {
     setMode('login');
@@ -164,7 +215,7 @@ export default function Login() {
   }
 
   return (
-    <div id="auth-screen" className="min-h-screen flex flex-col items-center justify-center p-4" style={{ backgroundColor: '#F3F2EF' }}>
+    <div id="auth-screen" className="min-h-screen flex flex-col items-center justify-center p-4" style={{ backgroundColor: '#F8FAFC' }}>
 
       {/* Logo + tagline, centered above the card */}
       <div className="mb-6 flex flex-col items-center">
@@ -206,6 +257,9 @@ export default function Login() {
             <button type="submit" disabled={loading} className="w-full bg-[#27AE60] hover:bg-[#219653] active:bg-[#1E8449] text-white text-sm font-bold py-3 rounded-full transition-colors cursor-pointer shadow-sm disabled:opacity-60">
               {loading ? 'Logging In...' : 'Log In'}
             </button>
+
+            <OrDivider />
+            <GoogleButton />
 
             <p className="text-center text-xs text-[#666666]">
               New company?{' '}

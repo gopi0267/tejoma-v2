@@ -3,10 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Home, Sparkles, Briefcase, Users, BarChart3, UserCircle, X, Upload, ClipboardCheck,
-  ChevronLeft, ChevronRight, UserCog, ShieldAlert
+  ChevronLeft, ChevronRight, UserCog, ShieldAlert, Heart, UserSearch
 } from 'lucide-react';
 import TejomaLogo from './TejomaLogo.js';
 import { useResponsiveBreakpoint } from '../hooks/useResponsiveBreakpoint.js';
@@ -30,12 +30,34 @@ export default function Sidebar({ activeTab, setActiveTab, userInfo, company, on
   const [tabletCollapsed, setTabletCollapsed] = useState(false);
   const collapsed = isTablet && tabletCollapsed;
 
+  // Self-contained polling (Phase 4) - not the app's global SSE broadcast (see src/realtime.ts's
+  // lack of per-connection company scoping, already avoided by Dashboard.tsx/Analytics.tsx for
+  // the same reason). No other recruiter file needs to know about this.
+  const [unreadMatchNotifications, setUnreadMatchNotifications] = useState(0);
+  useEffect(() => {
+    if (!userInfo) return;
+    let cancelled = false;
+    const fetchCount = async () => {
+      try {
+        const res = await fetch('/api/recruiter-notifications/unread-count');
+        if (res.ok && !cancelled) setUnreadMatchNotifications((await res.json()).count);
+      } catch {
+        // Non-critical - badge just won't update this cycle.
+      }
+    };
+    fetchCount();
+    const interval = setInterval(fetchCount, 30000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [userInfo]);
+
   const allMenuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: Home },
     { id: 'swipe', label: 'Match Candidates', icon: Sparkles, badge: 'AI Match' },
     { id: 'recruiter-review', label: 'Recruiter Review', icon: ClipboardCheck },
+    { id: 'matches', label: 'Matches', icon: Heart },
     { id: 'jobs', label: 'Job Positions', icon: Briefcase },
     { id: 'candidates', label: 'Candidates', icon: Users },
+    { id: 'candidate-search', label: 'Candidate Search', icon: UserSearch, badge: 'New' },
     { id: 'resume-upload', label: 'Upload Resumes', icon: Upload },
     { id: 'analytics', label: 'Analytics Hub', icon: BarChart3 },
     { id: 'user-management', label: 'User Management', icon: UserCog, adminOnly: true },
@@ -145,6 +167,11 @@ export default function Sidebar({ activeTab, setActiveTab, userInfo, company, on
                   <div className={`flex items-center ${collapsed ? '' : 'gap-3'}`}>
                     <IconComponent className={`w-4 h-4 ${isActive ? 'text-emerald-600' : 'text-slate-400'}`} />
                     {!collapsed && <span>{item.label}</span>}
+                    {item.id === 'matches' && unreadMatchNotifications > 0 && (
+                      <span className="bg-rose-500 text-white text-[9px] font-bold rounded-full min-w-[15px] h-[15px] px-1 flex items-center justify-center leading-none">
+                        {unreadMatchNotifications > 9 ? '9+' : unreadMatchNotifications}
+                      </span>
+                    )}
                   </div>
                   {!collapsed && item.badge && (
                     <span className="text-[9px] bg-emerald-100 text-emerald-800 border border-emerald-200/50 px-1.5 py-0.5 rounded-full font-bold uppercase tracking-wider">

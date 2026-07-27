@@ -29,3 +29,14 @@ export const otpRequestLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: 'Too many verification code requests from this network, please try again later.' },
 });
+
+// Candidate-facing resume parsing calls the same paid Gemini pipeline as the recruiter path,
+// but candidate accounts are self-registered (lower trust bar than a company-approved
+// recruiter account), so this caps it separately rather than relying on globalLimiter alone.
+export const resumeParseLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many resume uploads from this network, please try again later.' },
+});

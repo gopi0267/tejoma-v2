@@ -4,13 +4,13 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { 
-  X, Star, Check, RotateCcw, FastForward, Play, Pause, Filter, Search, 
-  MapPin, DollarSign, Calendar, Sparkles, BookOpen, Award, Copy, Volume2, 
-  VolumeX, BarChart3, LogOut, CheckCircle2, XCircle, Info, GraduationCap, Clock, 
+import {
+  X, Star, Check, RotateCcw, FastForward, Play, Pause, Filter, Search,
+  MapPin, DollarSign, Calendar, Sparkles, BookOpen, Award, Copy,
+  LogOut, CheckCircle2, XCircle, Info, GraduationCap, Clock,
   Building2, Briefcase, RefreshCw, ChevronLeft, ShieldCheck, HelpCircle, Laptop,
   User, CheckSquare, ListFilter, Users, History, CheckSquare as CheckSquareIcon,
-  Activity, Mail, Phone, Settings, ChevronUp, ChevronDown, Menu
+  Activity, Mail, Phone, ChevronUp, ChevronDown, Menu
 } from 'lucide-react';
 import { motion, AnimatePresence, useMotionValue, useTransform } from 'motion/react';
 import { Job, Candidate, MatchBreakdown } from '../types.js';
@@ -448,15 +448,15 @@ export default function SwipeInterface({
 
   const formatSalary = (salary: number) => {
     if (!salary) return 'Not disclosed';
-    if (salary <= 100) return `${salary}L`;
+    if (salary <= 100) return `₹${salary}L`;
     if (salary >= 100000) {
       const lakhs = (salary / 100000).toFixed(1);
-      return `${lakhs}L`;
+      return `₹${lakhs}L`;
     }
     if (salary >= 1000) {
-      return `${(salary / 1000).toFixed(0)}k`;
+      return `₹${(salary / 1000).toFixed(0)}k`;
     }
-    return salary.toLocaleString();
+    return `₹${salary.toLocaleString()}`;
   };
 
   const handleCopyText = (text: string, label: string, e: React.MouseEvent) => {
@@ -663,16 +663,6 @@ export default function SwipeInterface({
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Audio Toggle button */}
-            <button
-              id="audio-toggle-btn"
-              onClick={() => setSoundEnabled(!soundEnabled)}
-              className="p-3 rounded-lg text-[#666666] hover:text-[#27AE60] hover:bg-[#E5F5E5] transition-colors cursor-pointer"
-              title={soundEnabled ? 'Mute sound effects' : 'Unmute sound effects'}
-            >
-              {soundEnabled ? <Volume2 className="w-5 h-5 text-[#27AE60]" /> : <VolumeX className="w-5 h-5 text-[#E74C3C]" />}
-            </button>
-
             {/* Filter Toggle */}
             <button
               id="filters-toggle-btn"
@@ -684,28 +674,6 @@ export default function SwipeInterface({
             >
               <Filter className="w-5 h-5" />
             </button>
-
-            {/* Preferences Gear Trigger (Settings) */}
-            <button
-              id="preferences-nav-btn"
-              onClick={() => setShowSettingsModal(true)}
-              className="p-3 rounded-lg text-[#666666] hover:text-[#27AE60] hover:bg-[#E5F5E5] transition-colors cursor-pointer"
-              title="System Settings"
-            >
-              <Settings className="w-5 h-5" style={{ width: '20px', height: '20px' }} />
-            </button>
-
-            {/* Analytics trigger */}
-            {setActiveTab && (
-              <button
-                id="analytics-nav-btn"
-                onClick={() => setActiveTab('analytics')}
-                className="p-3 rounded-lg text-[#666666] hover:text-[#27AE60] hover:bg-[#E5F5E5] transition-colors cursor-pointer"
-                title="Analytics Hub"
-              >
-                <BarChart3 className="w-5 h-5" />
-              </button>
-            )}
 
             {/* Logout Trigger */}
             {onLogout && (

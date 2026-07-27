@@ -72,7 +72,7 @@ class MatchEnsemble:
         joblib.dump(self.lgbm, paths['lgbm'])
         joblib.dump({'sample_count': self.trained_sample_count}, paths['meta'])
 
-    def train(self, X: list[list[float]], y: list[int]) -> dict:
+    def train(self, X: list[list[float]], y: list[int], sample_weight: list[float] | None = None) -> dict:
         X_arr = np.array(X, dtype=float)
         y_arr = np.array(y, dtype=int)
         n = len(y_arr)
@@ -83,13 +83,25 @@ class MatchEnsemble:
         if len(set(y_arr.tolist())) < 2:
             return {'trained': False, 'reason': 'Training data has only one class (all accepts or all rejects) - cannot fit a classifier', 'sampleCount': n}
 
+        # Enterprise AI Matching Architecture, Phase 3 - Feedback Learning Engine
+        # (src/matching/feedbackSignals.ts). None reproduces pre-Phase-3 behavior exactly (every
+        # classifier's .fit() with no sample_weight kwarg at all, not a weight array of 1.0s -
+        # scikit-learn/XGBoost/LightGBM all treat the two identically, but omitting the kwarg
+        # entirely when it's genuinely unused keeps this code path byte-identical to before).
+        w_arr = np.array(sample_weight, dtype=float) if sample_weight is not None else None
+
         self.rf = RandomForestClassifier(n_estimators=200, max_depth=10, min_samples_leaf=2, random_state=42, class_weight='balanced')
         self.xgb = XGBClassifier(n_estimators=150, max_depth=5, learning_rate=0.1, eval_metric='logloss', random_state=42)
         self.lgbm = LGBMClassifier(n_estimators=150, max_depth=5, learning_rate=0.1, random_state=42, verbose=-1)
 
-        self.rf.fit(X_arr, y_arr)
-        self.xgb.fit(X_arr, y_arr)
-        self.lgbm.fit(X_arr, y_arr)
+        if w_arr is not None:
+            self.rf.fit(X_arr, y_arr, sample_weight=w_arr)
+            self.xgb.fit(X_arr, y_arr, sample_weight=w_arr)
+            self.lgbm.fit(X_arr, y_arr, sample_weight=w_arr)
+        else:
+            self.rf.fit(X_arr, y_arr)
+            self.xgb.fit(X_arr, y_arr)
+            self.lgbm.fit(X_arr, y_arr)
 
         self.is_trained = True
         self.trained_sample_count = n

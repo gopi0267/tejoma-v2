@@ -8,6 +8,7 @@ import { Plus, Upload, X, AlertCircle, CheckCircle, Loader, Search, Filter, Tras
 import { Candidate } from '../types.js';
 import { apiFetch } from '../utils/apiFetch.js';
 import { useResponsiveBreakpoint } from '../hooks/useResponsiveBreakpoint.js';
+import CandidateProfileView from './CandidateProfileView.js';
 
 interface CandidateManagementProps {
   candidates: Candidate[];
@@ -197,20 +198,20 @@ export default function CandidateManagement({ candidates, fetchCandidates }: Can
       <div className="px-4 sm:px-8 py-4 sm:py-6 bg-white border-b border-slate-200 shadow-sm">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
-            <h1 className="text-xl sm:text-2xl font-bold text-slate-900">Candidate Management</h1>
-            <p className="text-xs sm:text-sm text-slate-600 mt-1">Manage your talent pool • {candidates.length} total candidates</p>
+            <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Candidate Management</h1>
+            <p className="text-xs sm:text-sm text-slate-500 mt-1">Manage your talent pool • {candidates.length} total candidates</p>
           </div>
           <div className="flex flex-col sm:flex-row gap-3">
             <button
               onClick={() => setShowAddForm(true)}
-              className="flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-semibold py-2.5 px-5 rounded-lg cursor-pointer transition-all shadow-md hover:shadow-lg min-h-[44px]"
+              className="flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-bold py-2.5 px-5 rounded-lg cursor-pointer transition-all shadow-md hover:shadow-lg min-h-[44px]"
             >
               <Plus className="w-5 h-5" />
               Add Candidate
             </button>
             <button
               onClick={() => setShowBulkImport(true)}
-              className="flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-semibold py-2.5 px-5 rounded-lg cursor-pointer transition-all shadow-md hover:shadow-lg min-h-[44px]"
+              className="flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-bold py-2.5 px-5 rounded-lg cursor-pointer transition-all shadow-md hover:shadow-lg min-h-[44px]"
             >
               <Upload className="w-5 h-5" />
               Bulk Import
@@ -241,7 +242,7 @@ export default function CandidateManagement({ candidates, fetchCandidates }: Can
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               placeholder="Search by name or email..."
-              className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+              className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-300 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
             />
           </div>
           <button
@@ -327,13 +328,13 @@ export default function CandidateManagement({ candidates, fetchCandidates }: Can
                   {candidate.current_company && <p className="text-xs text-slate-600 mt-1 truncate" title={candidate.current_company}>{candidate.current_company}</p>}
                 </div>
                 <div className="min-w-0">
-                  <p className="text-sm text-slate-700 truncate" title={candidate.email}>{candidate.email}</p>
+                  <p className="text-sm text-slate-600 truncate" title={candidate.email}>{candidate.email}</p>
                 </div>
                 <div className="min-w-0">
-                  <p className="text-sm text-slate-700 truncate" title={candidate.current_job_title || ''}>{candidate.current_job_title || '-'}</p>
+                  <p className="text-sm text-slate-600 truncate" title={candidate.current_job_title || ''}>{candidate.current_job_title || '-'}</p>
                 </div>
                 <div className="min-w-0">
-                  <p className="text-sm text-slate-700 truncate" title={candidate.years_of_experience}>{candidate.years_of_experience || '-'}</p>
+                  <p className="text-sm text-slate-600 truncate" title={candidate.years_of_experience}>{candidate.years_of_experience || '-'}</p>
                 </div>
                 <div className="flex gap-2">
                   <button
@@ -366,7 +367,7 @@ export default function CandidateManagement({ candidates, fetchCandidates }: Can
             <div className="sticky top-0 bg-gradient-to-r from-emerald-50 to-blue-50 flex items-center justify-between p-6 border-b border-slate-200">
               <div>
                 <h2 className="text-xl font-bold text-slate-900">Add New Candidate</h2>
-                <p className="text-xs text-slate-600 mt-1">Fill in the candidate details below</p>
+                <p className="text-xs text-slate-500 mt-1">Fill in the candidate details below</p>
               </div>
               <button onClick={() => setShowAddForm(false)} aria-label="Close" className="min-w-[44px] min-h-[44px] flex items-center justify-center hover:bg-slate-200 rounded-lg transition-colors">
                 <X className="w-5 h-5 text-slate-600" />
@@ -377,25 +378,25 @@ export default function CandidateManagement({ candidates, fetchCandidates }: Can
               {/* Row 1: Name & Email */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                 <div>
-                  <label className="block text-sm font-semibold text-slate-700 mb-2">Full Name *</label>
+                  <label className="block text-sm font-bold text-slate-700 mb-2">Full Name *</label>
                   <input
                     type="text"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     placeholder="John Doe"
                     required
-                    className="w-full px-4 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                    className="w-full px-4 py-2.5 border border-slate-300 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-semibold text-slate-700 mb-2">Email Address *</label>
+                  <label className="block text-sm font-bold text-slate-700 mb-2">Email Address *</label>
                   <input
                     type="email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="john@example.com"
                     required
-                    className="w-full px-4 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                    className="w-full px-4 py-2.5 border border-slate-300 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
                   />
                 </div>
               </div>
@@ -403,23 +404,23 @@ export default function CandidateManagement({ candidates, fetchCandidates }: Can
               {/* Row 2: Phone & Experience */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                 <div>
-                  <label className="block text-sm font-semibold text-slate-700 mb-2">Phone Number</label>
+                  <label className="block text-sm font-bold text-slate-700 mb-2">Phone Number</label>
                   <input
                     type="tel"
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
                     placeholder="(555) 123-4567"
-                    className="w-full px-4 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                    className="w-full px-4 py-2.5 border border-slate-300 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-semibold text-slate-700 mb-2">Years of Experience</label>
+                  <label className="block text-sm font-bold text-slate-700 mb-2">Years of Experience</label>
                   <input
                     type="number"
                     value={experience}
                     onChange={(e) => setExperience(e.target.value)}
                     placeholder="5"
-                    className="w-full px-4 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                    className="w-full px-4 py-2.5 border border-slate-300 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
                   />
                 </div>
               </div>
@@ -427,23 +428,23 @@ export default function CandidateManagement({ candidates, fetchCandidates }: Can
               {/* Row 3: Skills & Location */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                 <div>
-                  <label className="block text-sm font-semibold text-slate-700 mb-2">Skills (comma-separated)</label>
+                  <label className="block text-sm font-bold text-slate-700 mb-2">Skills (comma-separated)</label>
                   <input
                     type="text"
                     value={skills}
                     onChange={(e) => setSkills(e.target.value)}
                     placeholder="React, TypeScript, Node.js"
-                    className="w-full px-4 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                    className="w-full px-4 py-2.5 border border-slate-300 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-semibold text-slate-700 mb-2">Location</label>
+                  <label className="block text-sm font-bold text-slate-700 mb-2">Location</label>
                   <input
                     type="text"
                     value={location}
                     onChange={(e) => setLocation(e.target.value)}
                     placeholder="Austin, TX"
-                    className="w-full px-4 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                    className="w-full px-4 py-2.5 border border-slate-300 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
                   />
                 </div>
               </div>
@@ -451,36 +452,36 @@ export default function CandidateManagement({ candidates, fetchCandidates }: Can
               {/* Row 4: Company & Job Title */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                 <div>
-                  <label className="block text-sm font-semibold text-slate-700 mb-2">Current Company</label>
+                  <label className="block text-sm font-bold text-slate-700 mb-2">Current Company</label>
                   <input
                     type="text"
                     value={company}
                     onChange={(e) => setCompany(e.target.value)}
                     placeholder="Tech Corp Inc"
-                    className="w-full px-4 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                    className="w-full px-4 py-2.5 border border-slate-300 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-semibold text-slate-700 mb-2">Job Title</label>
+                  <label className="block text-sm font-bold text-slate-700 mb-2">Job Title</label>
                   <input
                     type="text"
                     value={jobTitle}
                     onChange={(e) => setJobTitle(e.target.value)}
                     placeholder="Senior Developer"
-                    className="w-full px-4 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                    className="w-full px-4 py-2.5 border border-slate-300 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
                   />
                 </div>
               </div>
 
               {/* Row 5: Salary */}
               <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-2">Salary Expectation ($)</label>
+                <label className="block text-sm font-bold text-slate-700 mb-2">Salary Expectation ($)</label>
                 <input
                   type="number"
                   value={salary}
                   onChange={(e) => setSalary(e.target.value)}
                   placeholder="120000"
-                  className="w-full px-4 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                  className="w-full px-4 py-2.5 border border-slate-300 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
                 />
               </div>
 
@@ -496,7 +497,7 @@ export default function CandidateManagement({ candidates, fetchCandidates }: Can
                 <button
                   type="submit"
                   disabled={loading}
-                  className="flex-1 px-6 py-3 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 disabled:bg-slate-400 text-white font-semibold rounded-lg cursor-pointer transition-all flex items-center justify-center gap-2"
+                  className="flex-1 px-6 py-3 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 disabled:bg-slate-400 text-white font-bold rounded-lg cursor-pointer transition-all flex items-center justify-center gap-2"
                 >
                   {loading ? <Loader className="w-4 h-4 animate-spin" /> : 'Save Profile'}
                 </button>
@@ -513,7 +514,7 @@ export default function CandidateManagement({ candidates, fetchCandidates }: Can
             <div className="bg-gradient-to-r from-blue-50 to-cyan-50 flex items-center justify-between p-6 border-b border-slate-200">
               <div>
                 <h2 className="text-xl font-bold text-slate-900">Bulk Import Candidates</h2>
-                <p className="text-xs text-slate-600 mt-1">Paste JSON data to import multiple candidates at once</p>
+                <p className="text-xs text-slate-500 mt-1">Paste JSON data to import multiple candidates at once</p>
               </div>
               <button onClick={() => setShowBulkImport(false)} aria-label="Close" className="min-w-[44px] min-h-[44px] flex items-center justify-center hover:bg-slate-200 rounded-lg transition-colors">
                 <X className="w-5 h-5 text-slate-600" />
@@ -522,14 +523,14 @@ export default function CandidateManagement({ candidates, fetchCandidates }: Can
 
             <form onSubmit={handleBulkImport} className="p-4 sm:p-8 space-y-6">
               <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-2">JSON Data *</label>
+                <label className="block text-sm font-bold text-slate-700 mb-2">JSON Data *</label>
                 <textarea
                   value={bulkData}
                   onChange={(e) => setBulkData(e.target.value)}
                   placeholder={'[{"name":"John","email":"john@test.com","skills":"React,TypeScript","years_of_experience":5,"current_location":"Austin","salary_expectation":120000}]'}
                   rows={12}
                   required
-                  className="w-full px-4 py-3 border border-slate-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="w-full px-4 py-3 border border-slate-300 rounded-lg text-sm text-slate-800 font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
               </div>
 
@@ -548,7 +549,7 @@ export default function CandidateManagement({ candidates, fetchCandidates }: Can
                 <button
                   type="submit"
                   disabled={loading}
-                  className="flex-1 px-6 py-3 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:bg-slate-400 text-white font-semibold rounded-lg cursor-pointer transition-all flex items-center justify-center gap-2"
+                  className="flex-1 px-6 py-3 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:bg-slate-400 text-white font-bold rounded-lg cursor-pointer transition-all flex items-center justify-center gap-2"
                 >
                   {loading ? <Loader className="w-4 h-4 animate-spin" /> : 'Import Candidates'}
                 </button>
@@ -558,169 +559,16 @@ export default function CandidateManagement({ candidates, fetchCandidates }: Can
         </div>
       )}
 
-      {/* ==================== DETAIL VIEW MODAL ==================== */}
+      {/* ==================== CANDIDATE PROFILE VIEW ==================== */}
       {selectedCandidate && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl w-full max-w-2xl max-h-[85vh] overflow-auto shadow-2xl">
-            <div className="sticky top-0 bg-gradient-to-r from-slate-50 to-slate-100 flex items-center justify-between p-6 border-b border-slate-200">
-              <h2 className="text-xl font-bold text-slate-900">{selectedCandidate.name}</h2>
-              <button onClick={() => setSelectedCandidate(null)} aria-label="Close" className="min-w-[44px] min-h-[44px] flex items-center justify-center hover:bg-slate-300 rounded-lg transition-colors">
-                <X className="w-5 h-5 text-slate-600" />
-              </button>
-            </div>
-
-            <div className="p-4 sm:p-8 space-y-6">
-              {/* Contact */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                <div>
-                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Email</p>
-                  <p className="text-slate-900 font-medium mt-2">{selectedCandidate.email || '-'}</p>
-                </div>
-                <div>
-                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Phone</p>
-                  <p className="text-slate-900 font-medium mt-2">{selectedCandidate.phone || '-'}</p>
-                </div>
-                <div>
-                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">LinkedIn</p>
-                  <p className="text-slate-900 font-medium mt-2 truncate">{selectedCandidate.linkedin_url || '-'}</p>
-                </div>
-                <div>
-                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">GitHub / Portfolio</p>
-                  <p className="text-slate-900 font-medium mt-2 truncate">{selectedCandidate.github_or_portfolio_url || '-'}</p>
-                </div>
-              </div>
-
-              {/* Professional */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 pt-6 border-t border-slate-100">
-                <div>
-                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Current Position</p>
-                  <p className="text-slate-900 font-medium mt-2">{selectedCandidate.current_job_title || '-'}</p>
-                </div>
-                <div>
-                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Experience</p>
-                  <p className="text-slate-900 font-medium mt-2">{selectedCandidate.years_of_experience || '-'}</p>
-                </div>
-                <div>
-                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Current Company</p>
-                  <p className="text-slate-900 font-medium mt-2">{selectedCandidate.current_company || '-'}</p>
-                </div>
-                <div>
-                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Previous Companies</p>
-                  <p className="text-slate-900 font-medium mt-2">{selectedCandidate.previous_companies?.join(', ') || '-'}</p>
-                </div>
-                <div>
-                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Location</p>
-                  <p className="text-slate-900 font-medium mt-2">📍 {selectedCandidate.current_location || '-'}</p>
-                </div>
-                <div>
-                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Preferred Location</p>
-                  <p className="text-slate-900 font-medium mt-2">{selectedCandidate.preferred_location || '-'}</p>
-                </div>
-                <div>
-                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Industry / Domain</p>
-                  <p className="text-slate-900 font-medium mt-2">{selectedCandidate.industry_domain || '-'}</p>
-                </div>
-                <div>
-                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Willing to Relocate</p>
-                  <p className="text-slate-900 font-medium mt-2">{selectedCandidate.willingness_to_relocate || '-'}</p>
-                </div>
-              </div>
-
-              {/* Skills */}
-              {selectedCandidate.skills && selectedCandidate.skills.length > 0 && (
-                <div className="pt-6 border-t border-slate-100">
-                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-3">Skills</p>
-                  <div className="flex flex-wrap gap-2">
-                    {selectedCandidate.skills.map((skill, idx) => (
-                      <span key={idx} className="bg-emerald-100 text-emerald-700 px-3 py-1 rounded-full text-sm font-medium">
-                        {skill}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                <div>
-                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Technical Tools</p>
-                  <p className="text-slate-900 font-medium mt-2">{selectedCandidate.technical_tools || '-'}</p>
-                </div>
-                <div>
-                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Languages Known</p>
-                  <p className="text-slate-900 font-medium mt-2">{selectedCandidate.languages_known || '-'}</p>
-                </div>
-              </div>
-
-              {/* Education */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 pt-6 border-t border-slate-100">
-                <div>
-                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Highest Qualification</p>
-                  <p className="text-slate-900 font-medium mt-2">{selectedCandidate.highest_qualification || '-'}</p>
-                </div>
-                <div>
-                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">University</p>
-                  <p className="text-slate-900 font-medium mt-2">{selectedCandidate.university || '-'}</p>
-                </div>
-                <div>
-                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Graduation Year</p>
-                  <p className="text-slate-900 font-medium mt-2">{selectedCandidate.graduation_year || '-'}</p>
-                </div>
-                <div>
-                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Certifications</p>
-                  <p className="text-slate-900 font-medium mt-2">{selectedCandidate.certifications?.join(', ') || '-'}</p>
-                </div>
-              </div>
-
-              {/* Compensation */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 pt-6 border-t border-slate-100">
-                <div>
-                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Current CTC</p>
-                  <p className="text-slate-900 font-medium mt-2">{selectedCandidate.current_ctc || '-'}</p>
-                </div>
-                <div>
-                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Expected CTC</p>
-                  <p className="text-slate-900 font-medium mt-2">{selectedCandidate.expected_ctc || '-'}</p>
-                </div>
-                <div>
-                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Notice Period</p>
-                  <p className="text-slate-900 font-medium mt-2">{selectedCandidate.notice_period || '-'}</p>
-                </div>
-              </div>
-
-              {selectedCandidate.projects && (
-                <div className="pt-6 border-t border-slate-100">
-                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Projects</p>
-                  <p className="text-slate-900 mt-2 whitespace-pre-wrap">{selectedCandidate.projects}</p>
-                </div>
-              )}
-
-              {selectedCandidate.resume_summary && (
-                <div className="pt-6 border-t border-slate-100">
-                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Resume Summary</p>
-                  <p className="text-slate-900 mt-2 whitespace-pre-wrap">{selectedCandidate.resume_summary}</p>
-                </div>
-              )}
-
-              <div className="flex gap-3 pt-6 border-t border-slate-200">
-                <button
-                  onClick={() => setSelectedCandidate(null)}
-                  className="flex-1 px-6 py-3 border-2 border-slate-300 text-slate-700 font-semibold rounded-lg hover:bg-slate-50 cursor-pointer transition-colors"
-                >
-                  Close
-                </button>
-                <button
-                  onClick={() => {
-                    handleDeleteCandidate(selectedCandidate.id);
-                    setSelectedCandidate(null);
-                  }}
-                  className="flex-1 px-6 py-3 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-lg cursor-pointer transition-colors flex items-center justify-center gap-2"
-                >
-                  <Trash2 className="w-4 h-4" />
-                  Delete Candidate
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+        <CandidateProfileView
+          candidate={selectedCandidate}
+          onClose={() => setSelectedCandidate(null)}
+          onDelete={(id) => {
+            handleDeleteCandidate(id);
+            setSelectedCandidate(null);
+          }}
+        />
       )}
     </div>
   );

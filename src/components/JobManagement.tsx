@@ -59,8 +59,8 @@ export default function JobManagement({
   const [editSkills, setEditSkills] = useState('');
   const [editExp, setEditExp] = useState(0);
   const [editLocation, setEditLocation] = useState('');
-  const [editSalMin, setEditSalMin] = useState(50000);
-  const [editSalMax, setEditSalMax] = useState(120000);
+  const [editSalMin, setEditSalMin] = useState(500000);
+  const [editSalMax, setEditSalMax] = useState(1200000);
   const [editStatus, setEditStatus] = useState<'open' | 'closed' | 'on_hold'>('open');
 
   // Toast Helper Functions
@@ -462,7 +462,7 @@ export default function JobManagement({
                 </div>
                 <div className="flex flex-wrap gap-2 text-[10px] text-slate-500 font-mono">
                   <span className="flex items-center gap-1"><MapPin className="w-3.5 h-3.5 text-slate-400" /> {activeJobDetails.location}</span>
-                  <span className="flex items-center gap-1"><DollarSign className="w-3.5 h-3.5 text-slate-400" /> ${(activeJobDetails.salary_min/1000).toFixed(0)}k-${(activeJobDetails.salary_max/1000).toFixed(0)}k</span>
+                  <span className="flex items-center gap-1"><DollarSign className="w-3.5 h-3.5 text-slate-400" /> ₹{(activeJobDetails.salary_min/100000).toFixed(1)}L-₹{(activeJobDetails.salary_max/100000).toFixed(1)}L</span>
                 </div>
               </div>
 
@@ -624,7 +624,7 @@ export default function JobManagement({
 
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-slate-500 font-bold mb-1.5 uppercase tracking-wider text-[9px]">Salary Min ($)</label>
+                    <label className="block text-slate-500 font-bold mb-1.5 uppercase tracking-wider text-[9px]">Salary Min (₹)</label>
                     <input
                       type="number"
                       required
@@ -634,7 +634,7 @@ export default function JobManagement({
                     />
                   </div>
                   <div>
-                    <label className="block text-slate-500 font-bold mb-1.5 uppercase tracking-wider text-[9px]">Salary Max ($)</label>
+                    <label className="block text-slate-500 font-bold mb-1.5 uppercase tracking-wider text-[9px]">Salary Max (₹)</label>
                     <input
                       type="number"
                       required

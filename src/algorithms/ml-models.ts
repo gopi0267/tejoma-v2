@@ -18,6 +18,11 @@ const REQUEST_TIMEOUT_MS = 8000;
 export interface TrainSample {
   features: number[];
   label: 0 | 1;
+  // Enterprise AI Matching Architecture, Phase 3 - Feedback Learning Engine (see
+  // src/matching/feedbackSignals.ts). Optional, 0-1 confidence in this sample's label - omitted
+  // (or 1) reproduces pre-Phase-3 behavior exactly (every sample trusted equally). Passed to the
+  // Python ensemble's sample_weight on every underlying classifier's .fit() call.
+  weight?: number;
 }
 
 export interface TrainResult {

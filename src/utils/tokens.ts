@@ -75,3 +75,47 @@ export function clearAuthCookies(res: import('express').Response) {
   res.clearCookie(ACCESS_TOKEN_COOKIE, { path: '/' });
   res.clearCookie(REFRESH_TOKEN_COOKIE, { path: '/api/auth' });
 }
+
+// ==================== CANDIDATE SESSIONS ====================
+// A fully parallel token/cookie pair for candidates, who - per the approved Marketplace
+// Blueprint - must not belong to a company. AccessTokenPayload above is left untouched
+// (its company_id is required and embedded in every staff route's req.user!.company_id
+// reads); reusing it here would mean either a fake company_id or a breaking nullable
+// change across the entire existing backend. Distinct cookie names let a candidate
+// session and a staff session coexist in the same browser without collisions.
+
+export const CANDIDATE_ACCESS_TOKEN_COOKIE = 'candidate_access_token';
+export const CANDIDATE_REFRESH_TOKEN_COOKIE = 'candidate_refresh_token';
+
+export interface CandidateTokenPayload {
+  candidate_id: number;
+  email: string | null;
+  phone: string | null;
+  name: string;
+}
+
+export function signCandidateAccessToken(payload: CandidateTokenPayload): string {
+  return jwt.sign(payload, JWT_SECRET, { expiresIn: ACCESS_TOKEN_TTL });
+}
+
+export function verifyCandidateAccessToken(token: string): CandidateTokenPayload | null {
+  try {
+    return jwt.verify(token, JWT_SECRET) as CandidateTokenPayload;
+  } catch {
+    return null;
+  }
+}
+
+export function candidateAccessTokenCookieOptions(): CookieOptions {
+  return { ...baseCookieOptions(), path: '/', maxAge: ACCESS_TOKEN_TTL_MS };
+}
+
+export function candidateRefreshTokenCookieOptions(remember: boolean = true): CookieOptions {
+  const base: CookieOptions = { ...baseCookieOptions(), path: '/api/candidate-auth' };
+  return remember ? { ...base, maxAge: REFRESH_TOKEN_TTL_MS } : base;
+}
+
+export function clearCandidateAuthCookies(res: import('express').Response) {
+  res.clearCookie(CANDIDATE_ACCESS_TOKEN_COOKIE, { path: '/' });
+  res.clearCookie(CANDIDATE_REFRESH_TOKEN_COOKIE, { path: '/api/candidate-auth' });
+}

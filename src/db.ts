@@ -7,12 +7,28 @@
 
 import pkg from 'pg';
 import { config } from 'dotenv';
-import { User, Company, Candidate, Job, Swipe, MatchScore, ModelVersion, DailyStat, RecruiterNote, CompanyRegistrationRequest } from './types.js';
+import { User, Company, Candidate, Job, Swipe, MatchScore, ModelVersion, DailyStat, RecruiterNote, CompanyRegistrationRequest, CandidateAccount, SkillNode, SkillEdge, SkillRelationshipType, RoleProfile, MatchFeatureRecord, LtrModelVersion, MatchEvaluationRun, SkillDiscoveryProposal, SkillDiscoveryStatus, NormalizedJob, ProgressionType, SeniorityLevel, SeniorityTrend, CareerTransition, TenurePattern, EmploymentGap, DomainBreakdown, PredictedRole, CareerTrajectory, ReasoningConclusion, ConclusionSubjectType, DraftConclusion } from './types.js';
 
 config({ path: '.env.local' });
 
 const { Pool } = pkg;
 
+// max/min unchanged (still the pre-existing defaults/env vars) - this codebase's actual queries
+// are all short, bounded operations (no batch/report-style long-running queries), and pool size
+// wasn't a bottleneck found anywhere in this hardening pass, so raising it without a measured
+// need would just be guessing. The three additions below are pure safety-net defaults that were
+// previously implicit/unset, not sizing changes:
+//   - idleTimeoutMillis: pins node-postgres's own default (10s) explicitly, so a future
+//     node-postgres major version changing its default doesn't silently change production
+//     connection-churn behavior underneath this app.
+//   - connectionTimeoutMillis: was unset, which means node-postgres's actual default of 0 (wait
+//     forever) applied - if the database is briefly unreachable or the pool is exhausted, a
+//     request would previously hang indefinitely instead of failing fast with a clear error.
+//   - statement_timeout: a generous 30s safety net (Postgres-side, applied per connection) so a
+//     single runaway/blocked query can't hold a pool connection open forever - well above any
+//     legitimate query in this codebase (nothing here does long-running batch/report queries).
+// All three are env-overridable, matching the existing max/min pattern, defaulting to values that
+// don't change today's observed behavior at current scale.
 const pool = new Pool({
   host: process.env.DB_HOST || 'localhost',
   port: parseInt(process.env.DB_PORT || '5432'),
@@ -21,6 +37,9 @@ const pool = new Pool({
   password: String(process.env.DB_PASSWORD || ''),
   max: parseInt(process.env.DB_POOL_MAX || '10'),
   min: parseInt(process.env.DB_POOL_MIN || '2'),
+  idleTimeoutMillis: parseInt(process.env.DB_POOL_IDLE_TIMEOUT_MS || '10000'),
+  connectionTimeoutMillis: parseInt(process.env.DB_POOL_CONNECTION_TIMEOUT_MS || '5000'),
+  statement_timeout: parseInt(process.env.DB_STATEMENT_TIMEOUT_MS || '30000'),
 });
 
 pool.on('error', (err) => {
@@ -103,6 +122,267 @@ export async function updateLastLogin(userId: number): Promise<void> {
     await pool.query('UPDATE users SET last_login_at = CURRENT_TIMESTAMP WHERE id = $1', [userId]);
   } catch (error) {
     console.error('Error updating last login:', error);
+  }
+}
+
+// ==================== CANDIDATE ACCOUNTS (Phase 1 - independent of any company) ====================
+// Modeled line-for-line on the getUserBy*/createUser/updateUserPasswordHash functions above,
+// but against candidate_accounts, which has no company_id column at all (see
+// migration-candidate-accounts.sql).
+
+export async function getCandidateAccountById(id: number): Promise<CandidateAccount | null> {
+  try {
+    const result = await pool.query('SELECT * FROM candidate_accounts WHERE id = $1', [id]);
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error('Error fetching candidate account by id:', error);
+    return null;
+  }
+}
+
+export async function getCandidateAccountByEmail(email: string): Promise<CandidateAccount | null> {
+  try {
+    const result = await pool.query('SELECT * FROM candidate_accounts WHERE email = $1', [email]);
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error('Error fetching candidate account by email:', error);
+    return null;
+  }
+}
+
+export async function getCandidateAccountByPhone(phone: string): Promise<CandidateAccount | null> {
+  try {
+    const result = await pool.query('SELECT * FROM candidate_accounts WHERE phone = $1', [phone]);
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error('Error fetching candidate account by phone:', error);
+    return null;
+  }
+}
+
+export async function createCandidateAccount(account: { name: string; email: string | null; phone: string | null; password_hash: string }): Promise<CandidateAccount | null> {
+  try {
+    const result = await pool.query(
+      `INSERT INTO candidate_accounts (name, email, phone, password_hash, is_active)
+       VALUES ($1, $2, $3, $4, true)
+       RETURNING *`,
+      [account.name, account.email, account.phone, account.password_hash]
+    );
+    return result.rows[0];
+  } catch (error) {
+    console.error('Error creating candidate account:', error);
+    return null;
+  }
+}
+
+export async function updateCandidateAccountPasswordHash(candidateId: number, passwordHash: string): Promise<boolean> {
+  try {
+    const result = await pool.query(
+      'UPDATE candidate_accounts SET password_hash = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      [passwordHash, candidateId]
+    );
+    return (result.rowCount ?? 0) > 0;
+  } catch (error) {
+    console.error('Error updating candidate account password:', error);
+    return false;
+  }
+}
+
+export interface CandidateProfileUpdate {
+  name?: string;
+  headline?: string | null;
+  skills?: string[] | null;
+  years_of_experience?: string | null;
+  location?: string | null;
+  education?: string | null;
+  summary?: string | null;
+  current_company?: string | null;
+  certifications?: string[] | null;
+  tools?: string[] | null;
+  languages?: string[] | null;
+  notice_period?: string | null;
+  current_ctc?: string | null;
+  expected_ctc?: string | null;
+  open_to_work?: boolean;
+  visible_to_recruiters?: boolean;
+  course_name?: string | null;
+  course_type?: string | null;
+  specialization?: string | null;
+  institution_name?: string | null;
+  start_year?: string | null;
+  end_year?: string | null;
+  grading_system?: string | null;
+  grade_value?: string | null;
+  primary_skill?: string | null;
+  secondary_skills?: string[] | null;
+  resume_file_path?: string | null;
+  resume_original_filename?: string | null;
+  resume_file_uploaded_at?: string | null;
+  current_job_title?: string | null;
+  projects?: string | null;
+  linkedin_url?: string | null;
+  github_url?: string | null;
+}
+
+export async function updateCandidateProfile(candidateId: number, fields: CandidateProfileUpdate): Promise<CandidateAccount | null> {
+  const columns = Object.keys(fields) as (keyof CandidateProfileUpdate)[];
+  if (columns.length === 0) {
+    return getCandidateAccountById(candidateId);
+  }
+  try {
+    const setClause = columns.map((col, i) => `${col} = $${i + 1}`).join(', ');
+    const values = columns.map((col) => fields[col]);
+    const result = await pool.query(
+      `UPDATE candidate_accounts SET ${setClause}, updated_at = CURRENT_TIMESTAMP WHERE id = $${columns.length + 1} RETURNING *`,
+      [...values, candidateId]
+    );
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error('Error updating candidate profile:', error);
+    return null;
+  }
+}
+
+export async function markCandidateOnboardingComplete(candidateId: number): Promise<boolean> {
+  try {
+    const result = await pool.query(
+      'UPDATE candidate_accounts SET onboarding_completed_at = CURRENT_TIMESTAMP WHERE id = $1',
+      [candidateId]
+    );
+    return (result.rowCount ?? 0) > 0;
+  } catch (error) {
+    console.error('Error marking candidate onboarding complete:', error);
+    return false;
+  }
+}
+
+// ==================== CANDIDATE EXPERIENCES (onboarding "Add Experience", one-to-many) ====================
+// Every function below is scoped by candidate_account_id - callers always pass the id from the
+// caller's own auth token (req.candidate!.candidate_id), never a client-supplied id, so a
+// candidate can only ever read/write their own experience rows.
+
+export interface CandidateExperienceInput {
+  job_title?: string | null;
+  company?: string | null;
+  employment_type?: string | null;
+  experience_years?: number | null;
+  experience_months?: number | null;
+  current_ctc?: string | null;
+  expected_ctc?: string | null;
+  notice_period?: string | null;
+  current_location?: string | null;
+  preferred_location?: string | null;
+  key_responsibilities?: string | null;
+  skills_used?: string[] | null;
+}
+
+export async function getCandidateExperiences(candidateAccountId: number): Promise<any[]> {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM candidate_experiences WHERE candidate_account_id = $1 ORDER BY created_at ASC',
+      [candidateAccountId]
+    );
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching candidate experiences:', error);
+    return [];
+  }
+}
+
+export async function createCandidateExperience(candidateAccountId: number, fields: CandidateExperienceInput): Promise<any | null> {
+  try {
+    const result = await pool.query(
+      `INSERT INTO candidate_experiences
+        (candidate_account_id, job_title, company, employment_type, experience_years, experience_months,
+         current_ctc, expected_ctc, notice_period, current_location, preferred_location, key_responsibilities, skills_used)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+       RETURNING *`,
+      [
+        candidateAccountId,
+        fields.job_title ?? null, fields.company ?? null, fields.employment_type ?? null,
+        fields.experience_years ?? null, fields.experience_months ?? null,
+        fields.current_ctc ?? null, fields.expected_ctc ?? null, fields.notice_period ?? null,
+        fields.current_location ?? null, fields.preferred_location ?? null,
+        fields.key_responsibilities ?? null, fields.skills_used ?? null,
+      ]
+    );
+    return result.rows[0];
+  } catch (error) {
+    console.error('Error creating candidate experience:', error);
+    return null;
+  }
+}
+
+export async function updateCandidateExperience(id: number, candidateAccountId: number, fields: CandidateExperienceInput): Promise<any | null> {
+  const columns = Object.keys(fields) as (keyof CandidateExperienceInput)[];
+  if (columns.length === 0) return null;
+  try {
+    const setClause = columns.map((col, i) => `${col} = $${i + 1}`).join(', ');
+    const values = columns.map((col) => fields[col]);
+    const result = await pool.query(
+      `UPDATE candidate_experiences SET ${setClause}, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $${columns.length + 1} AND candidate_account_id = $${columns.length + 2}
+       RETURNING *`,
+      [...values, id, candidateAccountId]
+    );
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error('Error updating candidate experience:', error);
+    return null;
+  }
+}
+
+export async function deleteCandidateExperience(id: number, candidateAccountId: number): Promise<boolean> {
+  try {
+    const result = await pool.query(
+      'DELETE FROM candidate_experiences WHERE id = $1 AND candidate_account_id = $2',
+      [id, candidateAccountId]
+    );
+    return (result.rowCount ?? 0) > 0;
+  } catch (error) {
+    console.error('Error deleting candidate experience:', error);
+    return false;
+  }
+}
+
+// CANDIDATE REFRESH TOKEN SESSIONS - mirrors the refresh_tokens functions below exactly,
+// against candidate_refresh_tokens (FK'd to candidate_accounts, not users).
+
+export async function createCandidateRefreshToken(params: { candidateId: number; tokenHash: string; userAgent?: string | null; ip?: string | null; expiresAt: Date; remember?: boolean }): Promise<void> {
+  try {
+    await pool.query(
+      `INSERT INTO candidate_refresh_tokens (candidate_id, token_hash, user_agent, ip_address, expires_at, remember) VALUES ($1, $2, $3, $4, $5, $6)`,
+      [params.candidateId, params.tokenHash, params.userAgent || null, params.ip || null, params.expiresAt, params.remember !== false]
+    );
+  } catch (error) {
+    console.error('Error creating candidate refresh token:', error);
+    throw error;
+  }
+}
+
+export async function findCandidateRefreshTokenByHash(tokenHash: string): Promise<any | null> {
+  try {
+    const result = await pool.query('SELECT * FROM candidate_refresh_tokens WHERE token_hash = $1', [tokenHash]);
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error('Error finding candidate refresh token:', error);
+    return null;
+  }
+}
+
+export async function revokeCandidateRefreshTokenByHash(tokenHash: string): Promise<void> {
+  try {
+    await pool.query('UPDATE candidate_refresh_tokens SET revoked_at = CURRENT_TIMESTAMP WHERE token_hash = $1 AND revoked_at IS NULL', [tokenHash]);
+  } catch (error) {
+    console.error('Error revoking candidate refresh token:', error);
+  }
+}
+
+export async function revokeAllCandidateRefreshTokensForCandidate(candidateId: number): Promise<void> {
+  try {
+    await pool.query('UPDATE candidate_refresh_tokens SET revoked_at = CURRENT_TIMESTAMP WHERE candidate_id = $1 AND revoked_at IS NULL', [candidateId]);
+  } catch (error) {
+    console.error('Error revoking all candidate refresh tokens:', error);
   }
 }
 
@@ -638,7 +918,11 @@ export async function rejectCompanyRegistrationRequest(id: number, reviewerId: n
 }
 
 // OTP VERIFICATION (signup + password reset, email or phone)
-type OtpPurpose = 'signup' | 'password_reset';
+// 'candidate_signup' added for Phase 1 candidate registration; 'candidate_reset' added for
+// Phase 6 candidate forgot-password - otp_verification has no user/company FK at all (purpose
+// is a plain VARCHAR(20), which is why 'candidate_reset' rather than a longer, more descriptive
+// name), so this is a safe, additive widening.
+type OtpPurpose = 'signup' | 'password_reset' | 'candidate_signup' | 'candidate_reset';
 
 export async function createOtpRecord(params: { email?: string | null; phone?: string | null; purpose: OtpPurpose; otpHash: string; expiresAt: Date }): Promise<void> {
   try {
@@ -744,7 +1028,7 @@ export async function getPasswordHistory(userId: number): Promise<{ password_has
 // Helper to map DB row to Candidate model
 function mapRowToCandidate(row: any): Candidate {
   if (!row) return row;
-  
+
   const parseList = (val: any, sep = ', ') => {
     if (val === undefined || val === null) return [];
     if (Array.isArray(val)) return val;
@@ -753,8 +1037,15 @@ function mapRowToCandidate(row: any): Candidate {
     return str.split(sep).map((s: string) => s.trim()).filter((s: string) => s);
   };
 
+  // skills_array (added by migration-phase0-unified-matching.sql) is an internal-only, GIN-
+  // indexed projection of `skills` used by getCandidatesForJobScoring's structured pre-filter -
+  // deliberately excluded from the returned Candidate so the app-level shape (and every existing
+  // API response built from it) is byte-for-byte unchanged. `skills` (parsed below) remains the
+  // one source of truth every existing caller already reads.
+  const { skills_array, ...rest } = row;
+
   return {
-    ...row,
+    ...rest,
     skills: parseList(row.skills, ', '),
     previous_companies: parseList(row.previous_companies, '; '),
     certifications: parseList(row.certifications, '; ')
@@ -770,6 +1061,104 @@ export async function getCandidates(companyId: number): Promise<Candidate[]> {
   } catch (error) {
     console.error('Error fetching candidates:', error);
     return [];
+  }
+}
+
+// Enterprise AI Matching Architecture, Phase 0 - "Hybrid Retrieval's structured pre-filter stage
+// in front of the highest-risk endpoint (job-detail)". GET /jobs/:id (job.routes.ts) used to call
+// getCandidates() above and score EVERY candidate in the company on every page load, with no
+// bound - cost grew linearly with company size on an endpoint recruiters hit constantly.
+//
+// This is a bounded, RECALL-FIRST PRIORITIZATION, never a hard exclusion filter: it still
+// returns every candidate in the company as long as the company has `limit` candidates or fewer
+// (true for every company at today's scale, and the overwhelming majority of companies for a
+// long time to come), which makes it a provable no-op below that size - identical candidate set,
+// identical final ranking, to calling getCandidates() directly. Only once a company's candidate
+// pool genuinely exceeds `limit` does it truncate, and even then it always includes every
+// skill-overlapping candidate it can fit before padding the remainder with the most recent
+// non-overlapping ones - a poor-fit candidate can still appear (recruiters must still be able to
+// review someone with zero listed skill overlap), it just isn't guaranteed a slot once the pool
+// is large enough that "score literally everyone" would itself be the actual problem.
+//
+// Uses skills_array (migration-phase0-unified-matching.sql), not the legacy `skills` string
+// column, so the overlap check is a real GIN-indexed array operation (&&) rather than a text scan.
+export async function getCandidatesForJobScoring(
+  companyId: number,
+  requiredSkills: string[] | undefined,
+  limit: number = 1500
+): Promise<Candidate[]> {
+  try {
+    const hasSkills = Array.isArray(requiredSkills) && requiredSkills.length > 0;
+    const result = await pool.query(
+      `SELECT * FROM candidates
+       WHERE company_id = $1
+       ORDER BY
+         CASE WHEN $2::text[] IS NOT NULL AND skills_array && $2::text[] THEN 0 ELSE 1 END,
+         created_at DESC
+       LIMIT $3`,
+      [companyId, hasSkills ? requiredSkills : null, limit]
+    );
+    return result.rows.map(mapRowToCandidate);
+  } catch (error) {
+    console.error('Error fetching candidates for job scoring:', error);
+    return [];
+  }
+}
+
+// Production Database Hardening, Phase 2: a real, SQL-level paginated/searchable/sortable
+// replacement for getCandidates() above, ready for GET /api/candidates to adopt whenever the
+// frontend is migrated to consume a paginated response (see the Phase 2 report's "Candidate
+// Management migration strategy" for the exact backward-compatible rollout plan). NOT wired into
+// any route yet - getCandidates() and its callers (candidate.routes.ts, job.routes.ts,
+// swipe.routes.ts) are completely untouched, so no existing API response shape changes.
+// search mirrors CandidateManagement.tsx's current client-side filter exactly (name OR email,
+// case-insensitive substring) so swapping it in later changes nothing about what recruiters see,
+// only where the filtering happens.
+export interface CandidatesPageOptions {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  sortBy?: 'created_at_desc' | 'created_at_asc' | 'name_asc' | 'name_desc';
+}
+
+const CANDIDATES_SORT_COLUMNS: Record<NonNullable<CandidatesPageOptions['sortBy']>, string> = {
+  created_at_desc: 'created_at DESC',
+  created_at_asc: 'created_at ASC',
+  name_asc: 'name ASC',
+  name_desc: 'name DESC',
+};
+
+export async function getCandidatesPaginated(companyId: number, options: CandidatesPageOptions = {}): Promise<{ candidates: Candidate[]; total: number; page: number; pageSize: number }> {
+  const page = Math.max(1, options.page ?? 1);
+  const pageSize = Math.min(100, Math.max(1, options.pageSize ?? 25));
+  const sortColumn = CANDIDATES_SORT_COLUMNS[options.sortBy ?? 'created_at_desc'];
+  const offset = (page - 1) * pageSize;
+
+  try {
+    const params: any[] = [companyId];
+    let searchClause = '';
+    if (options.search && options.search.trim()) {
+      params.push(`%${options.search.trim()}%`);
+      searchClause = `AND (name ILIKE $${params.length} OR email ILIKE $${params.length})`;
+    }
+
+    const countResult = await pool.query(
+      `SELECT COUNT(*)::int AS count FROM candidates WHERE company_id = $1 ${searchClause}`,
+      params
+    );
+    const total = countResult.rows[0]?.count ?? 0;
+
+    params.push(pageSize, offset);
+    const result = await pool.query(
+      `SELECT * FROM candidates WHERE company_id = $1 ${searchClause}
+       ORDER BY ${sortColumn} LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params
+    );
+
+    return { candidates: result.rows.map(mapRowToCandidate), total, page, pageSize };
+  } catch (error) {
+    console.error('Error fetching paginated candidates:', error);
+    return { candidates: [], total: 0, page, pageSize };
   }
 }
 
@@ -816,6 +1205,14 @@ export async function createCandidate(candidate: Omit<Candidate, 'id' | 'created
       return String(val).trim() === '' ? 'NULL' : String(val);
     };
 
+    // skills_array dual-write (migration-phase0-unified-matching.sql) - kept in sync with the
+    // legacy `skills` string on every create, same normalization as the backfill migration used
+    // (drop blanks, trim). `skills` itself is untouched below - still the source of truth for
+    // every pre-existing read path.
+    const skillsArrayValue = Array.isArray(candidate.skills)
+      ? candidate.skills.map((s) => String(s).trim()).filter((s) => s)
+      : [];
+
     const cleanParams = [
       candidate.company_id,
       candidate.name,
@@ -854,6 +1251,17 @@ export async function createCandidate(candidate: Omit<Candidate, 'id' | 'created
       candidate.resume_embedding || null
     ].map(val => (typeof val === 'string' ? val.replace(/\u0000/g, '') : val));
 
+    cleanParams.push(skillsArrayValue);
+    // confidence_profile dual-write target (migration-phase1-intelligence-layer.sql) - JSONB
+    // needs an explicit stringify, same convention already used for jobs.parse_confidence/
+    // tech_stack in updateJob below. null when the caller didn't supply one (e.g. a candidate
+    // created through a path other than the parsed-resume flow in candidate.routes.ts).
+    cleanParams.push(candidate.confidence_profile ? JSON.stringify(candidate.confidence_profile) : null);
+    // Enterprise AI Matching Architecture, Phase 5 prerequisite (migration-phase5-structured-
+    // history.sql) - same null-when-not-supplied convention as confidence_profile above.
+    cleanParams.push(candidate.work_history !== undefined ? JSON.stringify(candidate.work_history) : null);
+    cleanParams.push(candidate.project_entries !== undefined ? JSON.stringify(candidate.project_entries) : null);
+
     const result = await pool.query(
       `INSERT INTO candidates
        (company_id, name, email, phone, skills, primary_skills, secondary_skills, years_of_experience,
@@ -861,8 +1269,9 @@ export async function createCandidate(candidate: Omit<Candidate, 'id' | 'created
         industry_domain, education, highest_qualification, graduation_year, university, certifications,
         projects, technical_tools, languages_known, current_ctc, expected_ctc, notice_period,
         willingness_to_relocate, linkedin_url, github_or_portfolio_url, resume_summary, resume_text,
-        ai_confidence_score, resume_file_path, extraction_status, candidate_hash, resume_embedding)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35)
+        ai_confidence_score, resume_file_path, extraction_status, candidate_hash, resume_embedding,
+        skills_array, confidence_profile, work_history, project_entries)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39)
        RETURNING *`,
       cleanParams
     );
@@ -876,7 +1285,13 @@ export async function createCandidate(candidate: Omit<Candidate, 'id' | 'created
 export async function deleteCandidate(id: number, companyId: number): Promise<boolean> {
   try {
     const result = await pool.query('DELETE FROM candidates WHERE id = $1 AND company_id = $2', [id, companyId]);
-    return (result.rowCount ?? 0) > 0;
+    const deleted = (result.rowCount ?? 0) > 0;
+    // reasoning_conclusions.subject_id has no FK (polymorphic across candidates/jobs - see
+    // migration-phase9-reasoning-layer.sql), so it needs an explicit cleanup call here; every
+    // other Phase 9 table (career_trajectories, project_intelligence) is FK'd and cleans up on
+    // its own via ON DELETE CASCADE.
+    if (deleted) await deleteReasoningConclusions('candidate', id);
+    return deleted;
   } catch (error) {
     console.error('Error deleting candidate:', error);
     return false;
@@ -896,9 +1311,25 @@ export async function updateCandidate(id: number, updates: Partial<Candidate>, c
         if (key === 'skills' && Array.isArray(value)) mappedValue = value.join(', ');
         else if (key === 'previous_companies' && Array.isArray(value)) mappedValue = value.join('; ');
         else if (key === 'certifications' && Array.isArray(value)) mappedValue = value.join('; ');
+        // confidence_profile dual-write target (migration-phase1-intelligence-layer.sql) - JSONB
+        // needs an explicit stringify, matching updateJob's identical tech_stack/parse_confidence handling.
+        else if (key === 'confidence_profile') mappedValue = JSON.stringify(value ?? {});
+        // Enterprise AI Matching Architecture, Phase 5 prerequisite - same JSONB stringify pattern.
+        else if (key === 'work_history' || key === 'project_entries') mappedValue = JSON.stringify(value ?? []);
+        // Enterprise AI Matching Architecture, §2.3 Project Intelligence Graph - same pattern.
+        else if (key === 'project_intelligence') mappedValue = JSON.stringify(value ?? []);
 
         values.push(mappedValue);
         paramIndex++;
+
+        // skills_array dual-write (migration-phase0-unified-matching.sql) - whenever `skills` is
+        // updated, keep the GIN-indexed array projection in sync in the same statement. `skills`
+        // itself (pushed above) remains the source of truth for every pre-existing read path.
+        if (key === 'skills' && Array.isArray(value)) {
+          fields.push(`skills_array = $${paramIndex}`);
+          values.push((value as unknown[]).map((s) => String(s).trim()).filter((s) => s));
+          paramIndex++;
+        }
       }
     }
 
@@ -1180,6 +1611,25 @@ export async function recordSwipe(swipe: {
     const savedRow = result.rows[0];
     console.log('✅ recordSwipe SUCCESS:', savedRow);
 
+    // Phase 3: fire-and-forget mutual-match check - never awaited, never throws into this
+    // function, cannot change this response in any way. Returns instantly for every ordinary
+    // recruiter-uploaded candidate (getLinkedCandidateAccountId resolves null for those).
+    if (Number(swipe.action) === 1) {
+      getLinkedCandidateAccountId(swipe.candidate_id)
+        .then((candidateAccountId) => {
+          if (candidateAccountId) return evaluateAndCreateMutualMatch(candidateAccountId, swipe.job_id);
+        })
+        .catch((err) => console.error('Error in post-swipe match check:', err));
+    }
+
+    // Phase 5: fire-and-forget application-status sync - runs for every action (0/0.5/1),
+    // unlike the match-check hook above. Covers both POST /swipes and PATCH
+    // /recruiter-review/:id/decision, since both call this same function - no changes needed
+    // to either route file. Never awaited, never throws into this response.
+    syncApplicationStatusFromRecruiterDecision(swipe.candidate_id, swipe.job_id, swipe.company_id, Number(swipe.action)).catch((err) =>
+      console.error('Error in post-swipe application status sync:', err)
+    );
+
     return {
       ...savedRow,
       action: Number(savedRow.action)
@@ -1206,6 +1656,27 @@ export async function getAllSwipesUnscoped(): Promise<Swipe[]> {
   }
 }
 
+// Enterprise AI Matching Architecture, Phase 3 - Feedback Learning Engine. candidate_application_
+// status is keyed by candidate_account_id (the candidate-portal login identity), not candidates.id
+// (the recruiter-facing resume record swipes.candidate_id points at) - most recruiter-uploaded
+// candidates have candidate_account_id = NULL (no portal account at all), so this join only ever
+// corroborates the subset of swipes whose candidate also has a linked self-service account. That
+// is real and expected, not a bug - see src/matching/feedbackSignals.ts's module doc. Pooled
+// across companies for the same reason getAllSwipesUnscoped is (feeds the same training set).
+export async function getAllApplicationStatusLinkedToCandidatesUnscoped(): Promise<Array<{ candidate_id: number; job_id: number; status: string }>> {
+  try {
+    const result = await pool.query(
+      `SELECT c.id AS candidate_id, cas.job_id, cas.status
+       FROM candidate_application_status cas
+       JOIN candidates c ON c.candidate_account_id = cas.candidate_account_id AND c.company_id = cas.company_id`
+    );
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching application status linked to candidates for training:', error);
+    return [];
+  }
+}
+
 export async function getAllCandidatesUnscoped(): Promise<Candidate[]> {
   try {
     const result = await pool.query('SELECT * FROM candidates ORDER BY created_at DESC');
@@ -1223,6 +1694,92 @@ export async function getAllJobsUnscoped(): Promise<Job[]> {
   } catch (error) {
     console.error('Error fetching all jobs for training:', error);
     return [];
+  }
+}
+
+// ==================== CANDIDATE JOB DISCOVERY (Phase 2 - cross-tenant, read-only) ====================
+// The first API-exposed cross-tenant job query in this codebase (getAllJobsUnscoped above is
+// the only precedent, and it's internal-only, never reached via a route). Uses an explicit
+// column allowlist - never SELECT * - so recruiter-internal fields (source_raw_text,
+// parse_confidence, description_embedding, company_id itself) and anything from
+// recruiter_notes/detailed_scoring_reports/swipes/match_scores (none of which are joined here)
+// can never reach a candidate, regardless of what the API route requests.
+const OPEN_JOB_PUBLIC_COLUMNS = `
+  j.id, j.title, j.description, j.required_skills, j.optional_skills, j.experience_years,
+  j.min_experience, j.max_experience, j.experience_unit, j.location, j.remote_type,
+  j.employment_type, j.industry, j.department, j.education, j.certifications,
+  j.salary_min, j.salary_max, j.salary_currency, j.number_of_openings, j.required_languages,
+  j.responsibilities, j.job_summary, j.created_at,
+  c.name AS company_name, c.logo_url AS company_logo_url
+`;
+
+export interface OpenJobsFilters {
+  search?: string;
+  skill?: string;
+  location?: string;
+  company?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+export async function getOpenJobsPublic(filters: OpenJobsFilters = {}): Promise<{ jobs: any[]; total: number }> {
+  try {
+    const conditions: string[] = [`j.status = 'open'`];
+    const params: any[] = [];
+
+    if (filters.search) {
+      params.push(`%${filters.search}%`);
+      conditions.push(`(j.title ILIKE $${params.length} OR j.job_summary ILIKE $${params.length} OR c.name ILIKE $${params.length})`);
+    }
+    if (filters.skill) {
+      params.push(`%${filters.skill}%`);
+      conditions.push(`EXISTS (SELECT 1 FROM unnest(j.required_skills) s WHERE s ILIKE $${params.length})`);
+    }
+    if (filters.location) {
+      params.push(`%${filters.location}%`);
+      conditions.push(`j.location ILIKE $${params.length}`);
+    }
+    if (filters.company) {
+      params.push(`%${filters.company}%`);
+      conditions.push(`c.name ILIKE $${params.length}`);
+    }
+
+    const whereClause = conditions.join(' AND ');
+    const pageSize = Math.min(Math.max(filters.pageSize || 20, 1), 100);
+    const page = Math.max(filters.page || 1, 1);
+    const offset = (page - 1) * pageSize;
+
+    const countResult = await pool.query(
+      `SELECT COUNT(*) FROM jobs j JOIN companies c ON c.id = j.company_id WHERE ${whereClause}`,
+      params
+    );
+    const total = parseInt(countResult.rows[0].count, 10);
+
+    const listParams = [...params, pageSize, offset];
+    const result = await pool.query(
+      `SELECT ${OPEN_JOB_PUBLIC_COLUMNS} FROM jobs j JOIN companies c ON c.id = j.company_id
+       WHERE ${whereClause} ORDER BY j.created_at DESC LIMIT $${listParams.length - 1} OFFSET $${listParams.length}`,
+      listParams
+    );
+
+    return { jobs: result.rows, total };
+  } catch (error) {
+    console.error('Error fetching public open jobs:', error);
+    return { jobs: [], total: 0 };
+  }
+}
+
+export async function getOpenJobByIdPublic(id: number): Promise<any | null> {
+  try {
+    const result = await pool.query(
+      `SELECT ${OPEN_JOB_PUBLIC_COLUMNS} FROM jobs j JOIN companies c ON c.id = j.company_id
+       WHERE j.id = $1 AND j.status = 'open'`,
+      [id]
+    );
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error('Error fetching public open job by id:', error);
+    return null;
   }
 }
 
@@ -1395,6 +1952,693 @@ export async function getShortlistedCandidateIds(jobId: number, companyId: numbe
   } catch (error) {
     console.error('Error fetching shortlisted candidate ids:', error);
     return new Set();
+  }
+}
+
+// ==================== MUTUAL MATCHING ENGINE (Phase 3) ====================
+// Bridges the recruiter-owned `candidates` table (swiped on by recruiters, unchanged) and the
+// self-owned `candidate_accounts` identity (Phase 1/2) via candidates.candidate_account_id -
+// set only when a candidate's own positive decision auto-creates/reuses a candidates row.
+// candidate_decisions mirrors swipes' append-only, action-NUMERIC, latest-row-via-DISTINCT-ON
+// shape exactly, on purpose, so match evaluation can read both sides symmetrically.
+
+export async function getJobCompanyId(jobId: number): Promise<number | null> {
+  try {
+    const result = await pool.query('SELECT company_id FROM jobs WHERE id = $1', [jobId]);
+    return result.rows[0]?.company_id ?? null;
+  } catch (error) {
+    console.error('Error fetching job company id:', error);
+    return null;
+  }
+}
+
+export async function getOrCreateLinkedCandidateRow(candidateAccountId: number, companyId: number): Promise<number | null> {
+  try {
+    const existing = await pool.query(
+      'SELECT id FROM candidates WHERE candidate_account_id = $1 AND company_id = $2',
+      [candidateAccountId, companyId]
+    );
+    if (existing.rows[0]) return existing.rows[0].id;
+
+    const account = await pool.query('SELECT * FROM candidate_accounts WHERE id = $1', [candidateAccountId]);
+    const profile = account.rows[0];
+    if (!profile) return null;
+
+    const skills = Array.isArray(profile.skills) && profile.skills.length > 0 ? profile.skills.join(', ') : 'NULL';
+    // skills_array dual-write (migration-phase0-unified-matching.sql) - candidate_accounts.skills
+    // is already a real array, so this is a direct pass-through, not a re-parse.
+    const skillsArray: string[] = Array.isArray(profile.skills) ? profile.skills : [];
+    const result = await pool.query(
+      `INSERT INTO candidates (company_id, candidate_account_id, name, email, phone, skills, years_of_experience, current_location, education, resume_summary, skills_array)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+       RETURNING id`,
+      [
+        companyId,
+        candidateAccountId,
+        profile.name,
+        profile.email || 'NULL',
+        profile.phone || 'NULL',
+        skills,
+        profile.years_of_experience || 'NULL',
+        profile.location || 'NULL',
+        profile.education || 'NULL',
+        profile.summary || 'NULL',
+        skillsArray,
+      ]
+    );
+    return result.rows[0].id;
+  } catch (error: any) {
+    if (error.code === '23505') {
+      // Unique-violation on (candidate_account_id, company_id) - a concurrent request already
+      // created the linked row between our check and our insert. Fetch and use that one.
+      const existing = await pool.query(
+        'SELECT id FROM candidates WHERE candidate_account_id = $1 AND company_id = $2',
+        [candidateAccountId, companyId]
+      );
+      if (existing.rows[0]) return existing.rows[0].id;
+    }
+    console.error('Error linking candidate account to candidates row:', error);
+    return null;
+  }
+}
+
+export async function recordCandidateDecision(params: { candidateAccountId: number; jobId: number; action: number; decisionType: 'swipe_right' | 'swipe_left' | 'apply' }): Promise<any | null> {
+  try {
+    const result = await pool.query(
+      `INSERT INTO candidate_decisions (candidate_account_id, job_id, action, decision_type, "timestamp")
+       VALUES ($1, $2, $3, $4, NOW())
+       RETURNING *`,
+      [params.candidateAccountId, params.jobId, params.action, params.decisionType]
+    );
+    return result.rows[0];
+  } catch (error) {
+    console.error('Error recording candidate decision:', error);
+    return null;
+  }
+}
+
+export async function getLatestCandidateDecision(candidateAccountId: number, jobId: number): Promise<any | null> {
+  try {
+    const result = await pool.query(
+      `SELECT * FROM candidate_decisions WHERE candidate_account_id = $1 AND job_id = $2 ORDER BY timestamp DESC, id DESC LIMIT 1`,
+      [candidateAccountId, jobId]
+    );
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error('Error fetching latest candidate decision:', error);
+    return null;
+  }
+}
+
+export async function getCandidateDecisions(candidateAccountId: number): Promise<any[]> {
+  try {
+    const result = await pool.query(
+      `SELECT cd.id, cd.job_id, cd.action, cd.decision_type, cd.timestamp,
+              j.title AS job_title, c.name AS company_name, c.logo_url AS company_logo_url
+       FROM candidate_decisions cd
+       JOIN jobs j ON j.id = cd.job_id
+       JOIN companies c ON c.id = j.company_id
+       WHERE cd.candidate_account_id = $1
+       ORDER BY cd.timestamp DESC, cd.id DESC`,
+      [candidateAccountId]
+    );
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching candidate decisions:', error);
+    return [];
+  }
+}
+
+export async function getCandidateActiveDecisions(candidateAccountId: number, action?: number): Promise<any[]> {
+  try {
+    const params: any[] = [candidateAccountId];
+    let actionFilter = '';
+    if (action !== undefined) {
+      params.push(action);
+      actionFilter = `WHERE latest.action = $${params.length}`;
+    }
+    const result = await pool.query(
+      `SELECT * FROM (
+         SELECT DISTINCT ON (cd.job_id) cd.id, cd.job_id, cd.action, cd.decision_type, cd.timestamp,
+                j.title AS job_title, j.location AS location, c.name AS company_name, c.logo_url AS company_logo_url
+         FROM candidate_decisions cd
+         JOIN jobs j ON j.id = cd.job_id
+         JOIN companies c ON c.id = j.company_id
+         WHERE cd.candidate_account_id = $1
+         ORDER BY cd.job_id, cd.timestamp DESC, cd.id DESC
+       ) latest
+       ${actionFilter}
+       ORDER BY latest.timestamp DESC`,
+      params
+    );
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching active candidate decisions:', error);
+    return [];
+  }
+}
+
+// Single atomic statement - no check-then-act race regardless of which side (candidate
+// decision or recruiter swipe) triggers the evaluation. ON CONFLICT DO NOTHING against the
+// mutual_matches_candidate_job_key UNIQUE constraint is the DB-enforced duplicate guard.
+async function tryCreateMutualMatchAtomic(candidateAccountId: number, jobId: number, companyId: number, candidatesId: number): Promise<void> {
+  try {
+    // RETURNING id (Phase 4) - a row only comes back when this call is the one that actually
+    // inserted the match (not skipped by ON CONFLICT), so notification creation below inherits
+    // mutual_matches' own exactly-once guarantee for free: no separate dedup logic needed.
+    const result = await pool.query(
+      `INSERT INTO mutual_matches (candidate_account_id, job_id, company_id, candidates_id)
+       SELECT $1, $2, $3, $4
+       WHERE (
+         SELECT action FROM candidate_decisions
+         WHERE candidate_account_id = $1 AND job_id = $2
+         ORDER BY timestamp DESC, id DESC LIMIT 1
+       ) = 1
+       AND (
+         SELECT action FROM swipes
+         WHERE candidate_id = $4 AND job_id = $2 AND company_id = $3
+         ORDER BY timestamp DESC, id DESC LIMIT 1
+       ) = 1
+       ON CONFLICT (candidate_account_id, job_id) DO NOTHING
+       RETURNING id`,
+      [candidateAccountId, jobId, companyId, candidatesId]
+    );
+
+    const matchId = result.rows[0]?.id;
+    if (matchId) {
+      // Never let a notification failure look like it affected the match itself - the match
+      // row above is already committed regardless of what happens here.
+      createMatchNotifications(matchId, candidateAccountId, jobId, companyId, candidatesId).catch((err) =>
+        console.error('Error creating match notifications:', err)
+      );
+    }
+  } catch (error) {
+    console.error('Error evaluating mutual match:', error);
+  }
+}
+
+// Phase 4: fires exactly once per match (see RETURNING id above). Creates one notification for
+// the candidate and one for the specific recruiter whose latest action=1 swipe completed the
+// match (swipes.recruiter_id) - the same "latest row wins" convention used everywhere else in
+// this codebase. Each INSERT also carries its own ON CONFLICT DO NOTHING as a second,
+// independent, DB-level duplicate guard.
+async function createMatchNotifications(matchId: number, candidateAccountId: number, jobId: number, companyId: number, candidatesId: number): Promise<void> {
+  const jobRes = await pool.query(
+    `SELECT j.title, c.name AS company_name FROM jobs j JOIN companies c ON c.id = j.company_id WHERE j.id = $1`,
+    [jobId]
+  );
+  const jobTitle = jobRes.rows[0]?.title || 'a job';
+  const companyName = jobRes.rows[0]?.company_name;
+
+  await pool.query(
+    `INSERT INTO candidate_notifications (candidate_account_id, match_id, type, title, message)
+     VALUES ($1, $2, 'match_created', $3, $4)
+     ON CONFLICT (candidate_account_id, match_id, type) DO NOTHING`,
+    [
+      candidateAccountId,
+      matchId,
+      `You matched with ${jobTitle}`,
+      `You and the recruiter both showed interest${companyName ? ` at ${companyName}` : ''} for ${jobTitle}. Check out your match!`,
+    ]
+  );
+
+  const swipeRes = await pool.query(
+    `SELECT recruiter_id FROM swipes WHERE candidate_id = $1 AND job_id = $2 AND company_id = $3 AND action = 1 ORDER BY timestamp DESC, id DESC LIMIT 1`,
+    [candidatesId, jobId, companyId]
+  );
+  const recruiterId = swipeRes.rows[0]?.recruiter_id;
+  if (recruiterId) {
+    await pool.query(
+      `INSERT INTO recruiter_notifications (user_id, company_id, match_id, type, title, message)
+       VALUES ($1, $2, $3, 'match_created', $4, $5)
+       ON CONFLICT (user_id, match_id, type) DO NOTHING`,
+      [recruiterId, companyId, matchId, `New mutual match for ${jobTitle}`, `A candidate matched with your job posting for ${jobTitle}.`]
+    );
+  }
+}
+
+// Called from the candidate-decision path (candidateAccountId/jobId known directly) and from
+// the recruiter-swipe hook (via getLinkedCandidateAccountId below) - the single shared entry
+// point for evaluating "did this pair just become a match" from either direction.
+export async function evaluateAndCreateMutualMatch(candidateAccountId: number, jobId: number): Promise<void> {
+  try {
+    const jobRes = await pool.query('SELECT company_id FROM jobs WHERE id = $1', [jobId]);
+    const companyId = jobRes.rows[0]?.company_id;
+    if (!companyId) return;
+
+    const linked = await pool.query(
+      'SELECT id FROM candidates WHERE candidate_account_id = $1 AND company_id = $2',
+      [candidateAccountId, companyId]
+    );
+    const candidatesId = linked.rows[0]?.id;
+    if (!candidatesId) return; // no linked candidates row yet - recruiter couldn't have swiped on this candidate
+
+    await tryCreateMutualMatchAtomic(candidateAccountId, jobId, companyId, candidatesId);
+  } catch (error) {
+    console.error('Error evaluating mutual match:', error);
+  }
+}
+
+// Used only by the recordSwipe fire-and-forget hook - returns null for every ordinary,
+// resume-uploaded candidates row (candidate_account_id is NULL), which is the common case.
+export async function getLinkedCandidateAccountId(candidatesId: number): Promise<number | null> {
+  try {
+    const result = await pool.query('SELECT candidate_account_id FROM candidates WHERE id = $1', [candidatesId]);
+    return result.rows[0]?.candidate_account_id ?? null;
+  } catch (error) {
+    console.error('Error looking up linked candidate account:', error);
+    return null;
+  }
+}
+
+// Candidate Explore/Likes redesign: the reverse lookup of getLinkedCandidateAccountId above -
+// "has the recruiter made a swipe decision on this candidate for this job yet". Read-only over
+// the existing candidates + swipes tables (the same two tables the mutual-match hook already
+// reads/writes) - no new table, no write. Returns null when the recruiter hasn't acted yet
+// (either no linked candidates row exists for this company, or one exists but has no swipe on
+// this job) - the caller displays that as "waiting for review".
+export async function getRecruiterDecisionForCandidateJob(candidateAccountId: number, jobId: number): Promise<{ action: number; timestamp: string } | null> {
+  try {
+    const jobRes = await pool.query('SELECT company_id FROM jobs WHERE id = $1', [jobId]);
+    const companyId = jobRes.rows[0]?.company_id;
+    if (!companyId) return null;
+
+    const linked = await pool.query(
+      'SELECT id FROM candidates WHERE candidate_account_id = $1 AND company_id = $2',
+      [candidateAccountId, companyId]
+    );
+    const candidatesId = linked.rows[0]?.id;
+    if (!candidatesId) return null;
+
+    const swipeRes = await pool.query(
+      `SELECT action, "timestamp" FROM swipes WHERE candidate_id = $1 AND job_id = $2 ORDER BY "timestamp" DESC, id DESC LIMIT 1`,
+      [candidatesId, jobId]
+    );
+    if (!swipeRes.rows[0]) return null;
+    return { action: Number(swipeRes.rows[0].action), timestamp: swipeRes.rows[0].timestamp };
+  } catch (error) {
+    console.error('Error looking up recruiter decision for candidate job:', error);
+    return null;
+  }
+}
+
+// ==================== APPLICATION STATUS (Phase 5) ====================
+// "Applied" is deliberately never written eagerly - it's the read-time default (COALESCE)
+// for any job the candidate has a decision_type='apply' row for but no
+// candidate_application_status row yet. The ONLY write path is
+// syncApplicationStatusFromRecruiterDecision, called from recordSwipe's hook above - there is
+// no separate "create application" function, matching the fact that candidate-decisions.routes.ts
+// (where the apply action itself is recorded) is explicitly not modified in this phase.
+// 'under_review' is a valid, schema-supported status but has no automatic trigger from the
+// existing 3-state swipe system (0=reject, 0.5=save/shortlist, 1=accept) - documented here
+// rather than invented a fake heuristic to reach it.
+
+export async function syncApplicationStatusFromRecruiterDecision(candidatesId: number, jobId: number, companyId: number, action: number): Promise<void> {
+  try {
+    const candidateAccountId = await getLinkedCandidateAccountId(candidatesId);
+    if (!candidateAccountId) return; // ordinary resume-uploaded candidate, not self-applied
+
+    // Only sync a status for a job the candidate formally applied to (decision_type='apply') -
+    // a recruiter swiping on someone who only ever swiped-right (interested, not applied) here,
+    // or applied to a different job at this company, gets no status row.
+    const appliedCheck = await pool.query(
+      `SELECT 1 FROM candidate_decisions WHERE candidate_account_id = $1 AND job_id = $2 AND decision_type = 'apply' LIMIT 1`,
+      [candidateAccountId, jobId]
+    );
+    if (appliedCheck.rows.length === 0) return;
+
+    const status = action === 1 ? 'accepted' : action === 0 ? 'rejected' : 'shortlisted';
+
+    const existing = await pool.query(
+      `SELECT status FROM candidate_application_status WHERE candidate_account_id = $1 AND job_id = $2`,
+      [candidateAccountId, jobId]
+    );
+    if (existing.rows[0]?.status === status) return; // no-op - avoids a duplicate notification for an unchanged status
+
+    await pool.query(
+      `INSERT INTO candidate_application_status (candidate_account_id, job_id, company_id, status, updated_at)
+       VALUES ($1, $2, $3, $4, NOW())
+       ON CONFLICT (candidate_account_id, job_id) DO UPDATE SET status = EXCLUDED.status, updated_at = NOW()`,
+      [candidateAccountId, jobId, companyId, status]
+    );
+
+    const jobRes = await pool.query('SELECT title FROM jobs WHERE id = $1', [jobId]);
+    const jobTitle = jobRes.rows[0]?.title || 'a job';
+    const statusLabel = status === 'accepted' ? 'Accepted' : status === 'rejected' ? 'Rejected' : 'Shortlisted';
+
+    // Reuses Phase 4's candidate_notifications table (job_id now nullable-widened to support
+    // this non-match notification type) - candidate only, recruiter gets nothing per spec.
+    await pool.query(
+      `INSERT INTO candidate_notifications (candidate_account_id, job_id, type, title, message)
+       VALUES ($1, $2, 'application_status_changed', $3, $4)`,
+      [candidateAccountId, jobId, `Application update: ${jobTitle}`, `Your application for ${jobTitle} is now ${statusLabel}.`]
+    );
+  } catch (error) {
+    console.error('Error syncing application status:', error);
+  }
+}
+
+export async function getCandidateApplications(candidateAccountId: number): Promise<any[]> {
+  try {
+    const result = await pool.query(
+      `SELECT DISTINCT ON (cd.job_id)
+              cd.job_id, cd.timestamp AS applied_at,
+              j.title AS job_title, c.name AS company_name, c.logo_url AS company_logo_url,
+              COALESCE(cas.status, 'applied') AS status,
+              COALESCE(cas.updated_at, cd.timestamp) AS last_updated
+       FROM candidate_decisions cd
+       JOIN jobs j ON j.id = cd.job_id
+       JOIN companies c ON c.id = j.company_id
+       LEFT JOIN candidate_application_status cas ON cas.candidate_account_id = cd.candidate_account_id AND cas.job_id = cd.job_id
+       WHERE cd.candidate_account_id = $1 AND cd.decision_type = 'apply'
+       ORDER BY cd.job_id, cd.timestamp ASC`,
+      [candidateAccountId]
+    );
+    return result.rows.sort((a: any, b: any) => new Date(b.last_updated).getTime() - new Date(a.last_updated).getTime());
+  } catch (error) {
+    console.error('Error fetching candidate applications:', error);
+    return [];
+  }
+}
+
+export async function getCandidateApplication(candidateAccountId: number, jobId: number): Promise<any | null> {
+  try {
+    const result = await pool.query(
+      `SELECT cd.job_id, MIN(cd.timestamp) AS applied_at,
+              j.title AS job_title, j.location, j.employment_type,
+              c.name AS company_name, c.logo_url AS company_logo_url,
+              COALESCE(cas.status, 'applied') AS status,
+              COALESCE(cas.updated_at, MIN(cd.timestamp)) AS last_updated
+       FROM candidate_decisions cd
+       JOIN jobs j ON j.id = cd.job_id
+       JOIN companies c ON c.id = j.company_id
+       LEFT JOIN candidate_application_status cas ON cas.candidate_account_id = cd.candidate_account_id AND cas.job_id = cd.job_id
+       WHERE cd.candidate_account_id = $1 AND cd.job_id = $2 AND cd.decision_type = 'apply'
+       GROUP BY cd.job_id, j.title, j.location, j.employment_type, c.name, c.logo_url, cas.status, cas.updated_at`,
+      [candidateAccountId, jobId]
+    );
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error('Error fetching candidate application:', error);
+    return null;
+  }
+}
+
+// ==================== CANDIDATE ANALYTICS (read-only aggregation, no schema change) ====================
+// Every function below only SELECTs from existing tables via patterns already established
+// elsewhere (getCandidateActiveDecisions' latest-decision-per-job dedup, getRecruiterDecision
+// ForCandidateJob's candidates->swipes join) - none of it writes, and none of it touches an
+// existing function, so Likes/Applications/Matches/Explore behavior is provably unaffected.
+
+// Full job detail (required_skills/salary/experience/description) for the candidate's liked
+// jobs - getCandidateActiveDecisions doesn't select these columns since Likes/Applications never
+// needed them, so this is a new, separate query rather than widening a function three other
+// screens depend on.
+export async function getCandidateLikedJobsForAnalytics(candidateAccountId: number): Promise<any[]> {
+  try {
+    const result = await pool.query(
+      `SELECT * FROM (
+         SELECT DISTINCT ON (cd.job_id) cd.job_id, cd.action, cd.timestamp,
+                j.title, j.location, j.required_skills, j.description,
+                j.salary_min, j.salary_max, j.experience_years, j.min_experience, j.max_experience
+         FROM candidate_decisions cd
+         JOIN jobs j ON j.id = cd.job_id
+         WHERE cd.candidate_account_id = $1
+         ORDER BY cd.job_id, cd.timestamp DESC, cd.id DESC
+       ) latest
+       WHERE latest.action = 1
+       ORDER BY latest.timestamp DESC`,
+      [candidateAccountId]
+    );
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching candidate liked jobs for analytics:', error);
+    return [];
+  }
+}
+
+// Aggregates across every company this candidate has a linked `candidates` row in (a candidate
+// can have one per company, same as getRecruiterDecisionForCandidateJob's per-job lookup does) -
+// "reviewed" = at least one swipe recorded for that job, "interested" = the latest swipe for
+// that job is action=1. Distinct job_id, not distinct swipe rows, since a recruiter can change
+// their decision (re-swipe) and that must count once, not twice.
+export async function getCandidateRecruiterReviewStats(candidateAccountId: number): Promise<{ reviewedJobIds: number[]; interestedJobIds: number[] }> {
+  try {
+    const result = await pool.query(
+      `SELECT * FROM (
+         SELECT DISTINCT ON (s.job_id) s.job_id, s.action
+         FROM candidates cand
+         JOIN swipes s ON s.candidate_id = cand.id
+         WHERE cand.candidate_account_id = $1
+         ORDER BY s.job_id, s.timestamp DESC, s.id DESC
+       ) latest`,
+      [candidateAccountId]
+    );
+    const reviewedJobIds = result.rows.map((r) => r.job_id);
+    const interestedJobIds = result.rows.filter((r) => Number(r.action) === 1).map((r) => r.job_id);
+    return { reviewedJobIds, interestedJobIds };
+  } catch (error) {
+    console.error('Error fetching candidate recruiter review stats:', error);
+    return { reviewedJobIds: [], interestedJobIds: [] };
+  }
+}
+
+// candidate_profile_views is a per-recruiter snapshot (UNIQUE recruiter+candidate, re-viewed
+// just bumps viewed_at) - a correct total-distinct-viewers count, not a historical event count.
+export async function getCandidateProfileViewCount(candidateAccountId: number): Promise<number> {
+  try {
+    const result = await pool.query('SELECT COUNT(*) FROM candidate_profile_views WHERE candidate_account_id = $1', [candidateAccountId]);
+    return parseInt(result.rows[0].count, 10);
+  } catch (error) {
+    console.error('Error fetching candidate profile view count:', error);
+    return 0;
+  }
+}
+
+export async function getCandidateApplicationStatusCounts(candidateAccountId: number): Promise<Record<string, number>> {
+  try {
+    const result = await pool.query(
+      `SELECT COALESCE(cas.status, 'applied') AS status, COUNT(*) FROM candidate_decisions cd
+       LEFT JOIN candidate_application_status cas ON cas.candidate_account_id = cd.candidate_account_id AND cas.job_id = cd.job_id
+       WHERE cd.candidate_account_id = $1 AND cd.decision_type = 'apply'
+       GROUP BY COALESCE(cas.status, 'applied')`,
+      [candidateAccountId]
+    );
+    const counts: Record<string, number> = {};
+    for (const row of result.rows) counts[row.status] = parseInt(row.count, 10);
+    return counts;
+  } catch (error) {
+    console.error('Error fetching candidate application status counts:', error);
+    return {};
+  }
+}
+
+// Three real, append-only event sources (verified: none of these tables dedupe/overwrite on
+// re-insert, unlike candidate_profile_views) bucketed by day for the last N days. Days with zero
+// events simply don't appear in the result - the route fills gaps to zero for a continuous chart.
+export async function getCandidateActivityTrend(candidateAccountId: number, days: number): Promise<{
+  liked: { date: string; count: number }[];
+  recruiterInterest: { date: string; count: number }[];
+  matches: { date: string; count: number }[];
+}> {
+  try {
+    const [likedRes, interestRes, matchesRes] = await Promise.all([
+      pool.query(
+        `SELECT date_trunc('day', "timestamp")::date AS date, COUNT(*) FROM candidate_decisions
+         WHERE candidate_account_id = $1 AND decision_type = 'swipe_right' AND "timestamp" >= NOW() - ($2 || ' days')::interval
+         GROUP BY 1 ORDER BY 1`,
+        [candidateAccountId, days]
+      ),
+      pool.query(
+        `SELECT date_trunc('day', s."timestamp")::date AS date, COUNT(*) FROM candidates cand
+         JOIN swipes s ON s.candidate_id = cand.id
+         WHERE cand.candidate_account_id = $1 AND s.action = 1 AND s."timestamp" >= NOW() - ($2 || ' days')::interval
+         GROUP BY 1 ORDER BY 1`,
+        [candidateAccountId, days]
+      ),
+      pool.query(
+        `SELECT date_trunc('day', matched_at)::date AS date, COUNT(*) FROM mutual_matches
+         WHERE candidate_account_id = $1 AND matched_at >= NOW() - ($2 || ' days')::interval
+         GROUP BY 1 ORDER BY 1`,
+        [candidateAccountId, days]
+      ),
+    ]);
+    const toSeries = (rows: any[]) => rows.map((r) => ({ date: r.date.toISOString().slice(0, 10), count: parseInt(r.count, 10) }));
+    return { liked: toSeries(likedRes.rows), recruiterInterest: toSeries(interestRes.rows), matches: toSeries(matchesRes.rows) };
+  } catch (error) {
+    console.error('Error fetching candidate activity trend:', error);
+    return { liked: [], recruiterInterest: [], matches: [] };
+  }
+}
+
+export async function getCandidateMatches(candidateAccountId: number): Promise<any[]> {
+  try {
+    const result = await pool.query(
+      `SELECT mm.id, mm.job_id, mm.matched_at,
+              j.title, j.location, j.employment_type, j.required_skills,
+              c.name AS company_name, c.logo_url AS company_logo_url,
+              cn.id AS notification_id, cn.read_at
+       FROM mutual_matches mm
+       JOIN jobs j ON j.id = mm.job_id
+       JOIN companies c ON c.id = mm.company_id
+       LEFT JOIN candidate_notifications cn ON cn.match_id = mm.id AND cn.candidate_account_id = mm.candidate_account_id
+       WHERE mm.candidate_account_id = $1
+       ORDER BY mm.matched_at DESC`,
+      [candidateAccountId]
+    );
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching candidate matches:', error);
+    return [];
+  }
+}
+
+export async function getRecruiterMatches(companyId: number, jobId?: number, userId?: number): Promise<any[]> {
+  try {
+    const params: any[] = [companyId];
+    let jobFilter = '';
+    if (jobId) {
+      params.push(jobId);
+      jobFilter = `AND mm.job_id = $${params.length}`;
+    }
+    // Notification join is additionally scoped to the viewing recruiter (userId) when provided -
+    // recruiter_notifications are personal, so read/unread state shown is always this viewer's
+    // own, never a colleague's.
+    let notifJoin = 'LEFT JOIN recruiter_notifications rn ON rn.match_id = mm.id';
+    if (userId) {
+      params.push(userId);
+      notifJoin += ` AND rn.user_id = $${params.length}`;
+    }
+    const result = await pool.query(
+      `SELECT mm.id, mm.job_id, mm.matched_at,
+              j.title AS job_title,
+              cand.id AS candidate_id, cand.name AS candidate_name, cand.email AS candidate_email,
+              cand.skills AS candidate_skills, cand.years_of_experience AS candidate_years_of_experience,
+              rn.id AS notification_id, rn.read_at
+       FROM mutual_matches mm
+       JOIN jobs j ON j.id = mm.job_id
+       LEFT JOIN candidates cand ON cand.id = mm.candidates_id
+       ${notifJoin}
+       WHERE mm.company_id = $1 ${jobFilter}
+       ORDER BY mm.matched_at DESC`,
+      params
+    );
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching recruiter matches:', error);
+    return [];
+  }
+}
+
+// ==================== NOTIFICATIONS (Phase 4) ====================
+// Every query/update below is scoped to the owning identity in its WHERE clause - never trust
+// a route param alone for whose notifications are being read or marked, per the explicit
+// server-side ownership requirement (candidate/recruiter notifications must never cross
+// accounts or companies).
+
+export async function getCandidateNotifications(candidateAccountId: number): Promise<any[]> {
+  try {
+    const result = await pool.query(
+      `SELECT id, match_id, type, title, message, read_at, created_at
+       FROM candidate_notifications WHERE candidate_account_id = $1 ORDER BY created_at DESC`,
+      [candidateAccountId]
+    );
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching candidate notifications:', error);
+    return [];
+  }
+}
+
+export async function getCandidateUnreadNotificationCount(candidateAccountId: number): Promise<number> {
+  try {
+    const result = await pool.query(
+      `SELECT COUNT(*) FROM candidate_notifications WHERE candidate_account_id = $1 AND read_at IS NULL`,
+      [candidateAccountId]
+    );
+    return parseInt(result.rows[0].count, 10);
+  } catch (error) {
+    console.error('Error counting unread candidate notifications:', error);
+    return 0;
+  }
+}
+
+export async function markCandidateNotificationRead(id: number, candidateAccountId: number): Promise<boolean> {
+  try {
+    const result = await pool.query(
+      `UPDATE candidate_notifications SET read_at = NOW() WHERE id = $1 AND candidate_account_id = $2 AND read_at IS NULL`,
+      [id, candidateAccountId]
+    );
+    return (result.rowCount ?? 0) > 0;
+  } catch (error) {
+    console.error('Error marking candidate notification read:', error);
+    return false;
+  }
+}
+
+export async function markAllCandidateNotificationsRead(candidateAccountId: number): Promise<number> {
+  try {
+    const result = await pool.query(
+      `UPDATE candidate_notifications SET read_at = NOW() WHERE candidate_account_id = $1 AND read_at IS NULL`,
+      [candidateAccountId]
+    );
+    return result.rowCount ?? 0;
+  } catch (error) {
+    console.error('Error marking all candidate notifications read:', error);
+    return 0;
+  }
+}
+
+export async function getRecruiterNotifications(userId: number, companyId: number): Promise<any[]> {
+  try {
+    const result = await pool.query(
+      `SELECT id, match_id, type, title, message, read_at, created_at
+       FROM recruiter_notifications WHERE user_id = $1 AND company_id = $2 ORDER BY created_at DESC`,
+      [userId, companyId]
+    );
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching recruiter notifications:', error);
+    return [];
+  }
+}
+
+export async function getRecruiterUnreadNotificationCount(userId: number, companyId: number): Promise<number> {
+  try {
+    const result = await pool.query(
+      `SELECT COUNT(*) FROM recruiter_notifications WHERE user_id = $1 AND company_id = $2 AND read_at IS NULL`,
+      [userId, companyId]
+    );
+    return parseInt(result.rows[0].count, 10);
+  } catch (error) {
+    console.error('Error counting unread recruiter notifications:', error);
+    return 0;
+  }
+}
+
+export async function markRecruiterNotificationRead(id: number, userId: number, companyId: number): Promise<boolean> {
+  try {
+    const result = await pool.query(
+      `UPDATE recruiter_notifications SET read_at = NOW() WHERE id = $1 AND user_id = $2 AND company_id = $3 AND read_at IS NULL`,
+      [id, userId, companyId]
+    );
+    return (result.rowCount ?? 0) > 0;
+  } catch (error) {
+    console.error('Error marking recruiter notification read:', error);
+    return false;
+  }
+}
+
+export async function markAllRecruiterNotificationsRead(userId: number, companyId: number): Promise<number> {
+  try {
+    const result = await pool.query(
+      `UPDATE recruiter_notifications SET read_at = NOW() WHERE user_id = $1 AND company_id = $2 AND read_at IS NULL`,
+      [userId, companyId]
+    );
+    return result.rowCount ?? 0;
+  } catch (error) {
+    console.error('Error marking all recruiter notifications read:', error);
+    return 0;
   }
 }
 
@@ -1859,6 +3103,663 @@ export async function saveMatchScore(score: Omit<MatchScore, 'id' | 'created_at'
   }
 }
 
+// ==================== FEATURE STORE (Phase 3) ====================
+// Append-only - never updated, matching match_scores' write-through convention. See
+// src/matching/featureStore.ts for the extraction/orchestration logic that calls this.
+export async function saveMatchFeatures(record: Omit<MatchFeatureRecord, 'id' | 'computed_at'>): Promise<MatchFeatureRecord | null> {
+  try {
+    const result = await pool.query(
+      `INSERT INTO match_features (
+         company_id, job_id, candidate_id, feature_schema_version,
+         jaccard_skill_score, cosine_text_score, cosine_bert_score, euclidean_feature_score,
+         experience_score, location_score, salary_score, levenshtein_title_score,
+         weighting, tier, model_version, source
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+       RETURNING *`,
+      [
+        record.company_id, record.job_id, record.candidate_id, record.feature_schema_version,
+        record.jaccard_skill_score, record.cosine_text_score, record.cosine_bert_score, record.euclidean_feature_score,
+        record.experience_score, record.location_score, record.salary_score, record.levenshtein_title_score,
+        record.weighting, record.tier, record.model_version, record.source,
+      ]
+    );
+    return result.rows[0];
+  } catch (error) {
+    console.error('Error saving match features:', error);
+    return null;
+  }
+}
+
+export async function getMatchFeaturesForJob(jobId: number, companyId: number): Promise<MatchFeatureRecord[]> {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM match_features WHERE job_id = $1 AND company_id = $2 ORDER BY computed_at DESC',
+      [jobId, companyId]
+    );
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching match features for job:', error);
+    return [];
+  }
+}
+
+// Point-in-time lookup: the most recent match_features row for this (job, candidate) pair that
+// was computed AT OR BEFORE asOf - i.e. the feature vector that was actually current when a
+// swipe/decision happened, not whatever candidate/job data looks like today. Training code uses
+// this to avoid the classic training-serving skew a naive "recompute features now" join would
+// introduce.
+export async function getMatchFeaturesAsOf(jobId: number, candidateId: number, asOf: string): Promise<MatchFeatureRecord | null> {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM match_features WHERE job_id = $1 AND candidate_id = $2 AND computed_at <= $3 ORDER BY computed_at DESC LIMIT 1',
+      [jobId, candidateId, asOf]
+    );
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error('Error fetching point-in-time match features:', error);
+    return null;
+  }
+}
+
+// ==================== LEARNING-TO-RANK (Phase 3) ====================
+// Deliberately separate from getLatestModelVersion/saveModelVersion (the production
+// classification ensemble) - see migration-phase3-feature-store-and-evaluation.sql's comment on
+// ltr_model_versions for why.
+export async function saveLtrModelVersion(version: Omit<LtrModelVersion, 'id' | 'trained_at'>): Promise<LtrModelVersion | null> {
+  try {
+    const result = await pool.query(
+      `INSERT INTO ltr_model_versions (version, algorithm, training_examples, training_groups, ndcg_at_10, is_active)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING *`,
+      [version.version, version.algorithm, version.training_examples, version.training_groups, version.ndcg_at_10, version.is_active]
+    );
+    return result.rows[0];
+  } catch (error) {
+    console.error('Error saving LTR model version:', error);
+    return null;
+  }
+}
+
+export async function getLatestLtrModelVersion(): Promise<LtrModelVersion | null> {
+  try {
+    const result = await pool.query('SELECT * FROM ltr_model_versions ORDER BY trained_at DESC LIMIT 1');
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error('Error fetching latest LTR model version:', error);
+    return null;
+  }
+}
+
+// ==================== EVALUATION FRAMEWORK (Phase 3) ====================
+export async function saveEvaluationRun(run: Omit<MatchEvaluationRun, 'id' | 'evaluated_at'>): Promise<MatchEvaluationRun | null> {
+  try {
+    const result = await pool.query(
+      `INSERT INTO match_evaluation_runs (
+         company_id, jobs_evaluated, swipes_evaluated, k, ndcg_at_k, map_at_k, mrr, precision_at_k, recall_at_k, data_volume_note
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+       RETURNING *`,
+      [run.company_id, run.jobs_evaluated, run.swipes_evaluated, run.k, run.ndcg_at_k, run.map_at_k, run.mrr, run.precision_at_k, run.recall_at_k, run.data_volume_note]
+    );
+    return result.rows[0];
+  } catch (error) {
+    console.error('Error saving evaluation run:', error);
+    return null;
+  }
+}
+
+export async function getEvaluationRuns(companyId: number, limit: number = 20): Promise<MatchEvaluationRun[]> {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM match_evaluation_runs WHERE company_id = $1 ORDER BY evaluated_at DESC LIMIT $2',
+      [companyId, limit]
+    );
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching evaluation runs:', error);
+    return [];
+  }
+}
+
+// Every swipe for a single company (companyId, unlike getAllSwipesUnscoped) - the real dataset
+// the Evaluation Framework grades ranking quality against, since evaluation is a per-tenant
+// report a recruiter views (unlike the pooled-across-companies ML ensemble training set).
+export async function getSwipesForEvaluation(companyId: number): Promise<Swipe[]> {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM swipes WHERE company_id = $1 AND action IS NOT NULL ORDER BY job_id, "timestamp" ASC',
+      [companyId]
+    );
+    // NUMERIC columns (action, match_score) come back as strings from node-postgres, not numbers
+    // - same coercion getAllSwipesUnscoped already applies to action, extended here to
+    // match_score too since evaluation.ts sorts/compares it numerically.
+    return result.rows.map((row) => ({ ...row, action: Number(row.action), match_score: row.match_score === null ? null : Number(row.match_score) }));
+  } catch (error) {
+    console.error('Error fetching swipes for evaluation:', error);
+    return [];
+  }
+}
+
+// ==================== SKILL INTELLIGENCE PLATFORM (Phase 1) ====================
+// Not yet read by src/services.ts's live scoring - see src/matching/skillIntelligence.ts for the
+// seeding/canonicalization logic that calls these. Every function here is a plain data-access
+// primitive; the domain logic (what to seed, how to canonicalize) lives in that module.
+
+export async function upsertSkillNode(node: {
+  canonical_name: string;
+  category: string;
+  technology_domain?: string | null;
+  aliases: string[];
+  is_deprecated?: boolean;
+  is_emerging?: boolean;
+  source?: string;
+  // Enterprise AI Matching Architecture, Phase 4 - optional, defaults to the column's existing
+  // 1.0 default (every Phase 1 caller omits this and gets identical behavior to before). Lets
+  // Unknown Skill Discovery create a newly-promoted node at a reduced initial confidence per the
+  // architecture doc's "reduced initial confidence... until it accumulates more corroborating
+  // evidence" (§5, pipeline stage 6), instead of every skill node starting at full confidence.
+  confidence?: number;
+}): Promise<SkillNode | null> {
+  try {
+    const result = await pool.query(
+      `INSERT INTO skill_nodes (canonical_name, category, technology_domain, aliases, is_deprecated, is_emerging, source, confidence)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, 1.0))
+       ON CONFLICT (canonical_name) DO UPDATE SET
+         category = EXCLUDED.category, technology_domain = EXCLUDED.technology_domain,
+         aliases = EXCLUDED.aliases, is_deprecated = EXCLUDED.is_deprecated,
+         is_emerging = EXCLUDED.is_emerging, source = EXCLUDED.source, updated_at = CURRENT_TIMESTAMP
+       RETURNING *`,
+      [node.canonical_name, node.category, node.technology_domain ?? null, node.aliases, node.is_deprecated ?? false, node.is_emerging ?? false, node.source ?? 'dictionary', node.confidence ?? null]
+    );
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error('Error upserting skill node:', error);
+    return null;
+  }
+}
+
+export async function getSkillNodeByCanonical(canonicalName: string): Promise<SkillNode | null> {
+  try {
+    const result = await pool.query('SELECT * FROM skill_nodes WHERE canonical_name = $1', [canonicalName]);
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error('Error fetching skill node by canonical name:', error);
+    return null;
+  }
+}
+
+// Enterprise AI Matching Architecture, Phase 2 - used by graph-edge traversal (retrieval.ts's
+// GraphExpandedSkillStrategy, dynamicWeighting.ts's tier-weighted skill scoring) to resolve an
+// edge's to_skill_id back to a display name without re-fetching the whole skill_nodes table.
+export async function getSkillNodeById(id: number): Promise<SkillNode | null> {
+  try {
+    const result = await pool.query('SELECT * FROM skill_nodes WHERE id = $1', [id]);
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error('Error fetching skill node by id:', error);
+    return null;
+  }
+}
+
+// The actual canonicalization lookup: does this raw skill string resolve to a known node, either
+// as the canonical spelling itself or one of its aliases? Case-insensitive on both sides (aliases
+// are stored with their natural casing, e.g. "ReactJS" - lower() on both sides of the comparison
+// avoids needing a second, all-lowercase copy of every alias).
+export async function findSkillNodeByAlias(rawText: string): Promise<SkillNode | null> {
+  try {
+    const result = await pool.query(
+      `SELECT * FROM skill_nodes
+       WHERE lower(canonical_name) = lower($1)
+          OR EXISTS (SELECT 1 FROM unnest(aliases) AS a WHERE lower(a) = lower($1))
+       LIMIT 1`,
+      [rawText.trim()]
+    );
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error('Error resolving skill alias:', error);
+    return null;
+  }
+}
+
+export async function getAllSkillNodes(): Promise<SkillNode[]> {
+  try {
+    const result = await pool.query('SELECT * FROM skill_nodes ORDER BY canonical_name');
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching all skill nodes:', error);
+    return [];
+  }
+}
+
+export async function updateSkillNodePopularity(id: number, popularityScore: number): Promise<void> {
+  try {
+    await pool.query('UPDATE skill_nodes SET popularity_score = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', [popularityScore, id]);
+  } catch (error) {
+    console.error('Error updating skill node popularity:', error);
+  }
+}
+
+// Enterprise AI Matching Architecture, Phase 4 - Unknown Skill Discovery (architecture doc §5).
+// Additive to every skill_nodes function above; nothing here is read by Phase 0-3 code.
+export async function updateSkillNodeEmbedding(id: number, embedding: number[]): Promise<void> {
+  try {
+    await pool.query('UPDATE skill_nodes SET embedding = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', [embedding, id]);
+  } catch (error) {
+    console.error('Error updating skill node embedding:', error);
+  }
+}
+
+export async function getSkillDiscoveryProposalByToken(normalizedToken: string): Promise<SkillDiscoveryProposal | null> {
+  try {
+    const result = await pool.query('SELECT * FROM skill_discovery_proposals WHERE normalized_token = $1', [normalizedToken]);
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error('Error fetching skill discovery proposal by token:', error);
+    return null;
+  }
+}
+
+export async function getSkillDiscoveryProposalById(id: number): Promise<SkillDiscoveryProposal | null> {
+  try {
+    const result = await pool.query('SELECT * FROM skill_discovery_proposals WHERE id = $1', [id]);
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error('Error fetching skill discovery proposal by id:', error);
+    return null;
+  }
+}
+
+export async function createSkillDiscoveryProposal(input: {
+  raw_token: string;
+  normalized_token: string;
+  source_type: 'resume' | 'jd';
+  context_text: string | null;
+  is_skill: boolean | null;
+  proposed_category: string | null;
+  nearest_neighbors: SkillDiscoveryProposal['nearest_neighbors'];
+  proposed_relationship_type: SkillRelationshipType | null;
+  proposed_related_skill_id: number | null;
+  confidence: number | null;
+  status: SkillDiscoveryStatus;
+}): Promise<SkillDiscoveryProposal | null> {
+  try {
+    const result = await pool.query(
+      `INSERT INTO skill_discovery_proposals (
+         raw_token, normalized_token, source_type, context_text,
+         is_skill, proposed_category, nearest_neighbors, proposed_relationship_type,
+         proposed_related_skill_id, confidence, status
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+       ON CONFLICT (normalized_token) DO NOTHING
+       RETURNING *`,
+      [
+        input.raw_token, input.normalized_token, input.source_type, input.context_text,
+        input.is_skill, input.proposed_category, JSON.stringify(input.nearest_neighbors ?? []), input.proposed_relationship_type,
+        input.proposed_related_skill_id, input.confidence, input.status,
+      ]
+    );
+    // ON CONFLICT DO NOTHING returns no row on a race (two concurrent first-sightings of the same
+    // token) - fetch the row the other writer just inserted rather than treating this as failure.
+    return result.rows[0] || (await getSkillDiscoveryProposalByToken(input.normalized_token));
+  } catch (error) {
+    console.error('Error creating skill discovery proposal:', error);
+    return null;
+  }
+}
+
+// Generic partial update, same pattern as updateJob above - only columns present in `updates`
+// are written.
+export async function updateSkillDiscoveryProposal(id: number, updates: Partial<SkillDiscoveryProposal>): Promise<SkillDiscoveryProposal | null> {
+  try {
+    const fields: string[] = [];
+    const values: any[] = [];
+    let paramIndex = 1;
+
+    for (const [key, value] of Object.entries(updates)) {
+      if (value !== undefined && key !== 'id') {
+        fields.push(`${key} = $${paramIndex}`);
+        values.push(key === 'nearest_neighbors' ? JSON.stringify(value ?? []) : value);
+        paramIndex++;
+      }
+    }
+
+    if (fields.length === 0) return getSkillDiscoveryProposalById(id);
+
+    fields.push(`updated_at = CURRENT_TIMESTAMP`);
+    values.push(id);
+
+    const result = await pool.query(
+      `UPDATE skill_discovery_proposals SET ${fields.join(', ')} WHERE id = $${paramIndex} RETURNING *`,
+      values
+    );
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error('Error updating skill discovery proposal:', error);
+    return null;
+  }
+}
+
+export async function getPendingSkillDiscoveryProposals(limit: number = 50): Promise<SkillDiscoveryProposal[]> {
+  try {
+    const result = await pool.query(
+      "SELECT * FROM skill_discovery_proposals WHERE status = 'pending' ORDER BY mention_count DESC, created_at ASC LIMIT $1",
+      [limit]
+    );
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching pending skill discovery proposals:', error);
+    return [];
+  }
+}
+
+// Read-only, cross-company (co-occurrence is a platform-wide statistical signal, not tenant
+// data) - used only by src/matching/skillIntelligence.ts's computeCooccurrenceEdges to compute
+// real skill co-occurrence weights. skills_array is the array projection added by
+// migration-phase0-unified-matching.sql; the legacy `skills` string column is untouched.
+export async function getAllCandidateSkillArrays(): Promise<string[][]> {
+  try {
+    const result = await pool.query('SELECT skills_array FROM candidates WHERE skills_array IS NOT NULL AND array_length(skills_array, 1) > 0');
+    return result.rows.map((r) => r.skills_array as string[]);
+  } catch (error) {
+    console.error('Error fetching candidate skill arrays:', error);
+    return [];
+  }
+}
+
+export async function getAllJobRequiredSkills(): Promise<string[][]> {
+  try {
+    const result = await pool.query('SELECT required_skills FROM jobs WHERE required_skills IS NOT NULL AND array_length(required_skills, 1) > 0');
+    return result.rows.map((r) => r.required_skills as string[]);
+  } catch (error) {
+    console.error('Error fetching job required skills:', error);
+    return [];
+  }
+}
+
+export async function upsertSkillEdge(
+  fromSkillId: number,
+  toSkillId: number,
+  relationshipType: SkillRelationshipType,
+  weight: number = 1.0,
+  source: string = 'curated'
+): Promise<SkillEdge | null> {
+  try {
+    const result = await pool.query(
+      `INSERT INTO skill_edges (from_skill_id, to_skill_id, relationship_type, weight, source)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (from_skill_id, to_skill_id, relationship_type) DO UPDATE SET weight = EXCLUDED.weight, source = EXCLUDED.source
+       RETURNING *`,
+      [fromSkillId, toSkillId, relationshipType, weight, source]
+    );
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error('Error upserting skill edge:', error);
+    return null;
+  }
+}
+
+export async function getSkillEdgesFrom(skillId: number, relationshipType?: SkillRelationshipType): Promise<SkillEdge[]> {
+  try {
+    const result = relationshipType
+      ? await pool.query('SELECT * FROM skill_edges WHERE from_skill_id = $1 AND relationship_type = $2', [skillId, relationshipType])
+      : await pool.query('SELECT * FROM skill_edges WHERE from_skill_id = $1', [skillId]);
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching skill edges:', error);
+    return [];
+  }
+}
+
+export async function getAllSkillEdges(): Promise<SkillEdge[]> {
+  try {
+    const result = await pool.query('SELECT * FROM skill_edges');
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching all skill edges:', error);
+    return [];
+  }
+}
+
+// Reverse of getSkillEdgesFrom - needed by Phase 9's Reasoning Layer to walk a skill UP to its
+// PARENT_OF domain node (skillIntelligence.ts seeds PARENT_OF as domain --PARENT_OF--> skill, so
+// finding "which domain(s) is this skill under" means querying by to_skill_id, not from_skill_id).
+export async function getSkillEdgesTo(skillId: number, relationshipType?: SkillRelationshipType): Promise<SkillEdge[]> {
+  try {
+    const result = relationshipType
+      ? await pool.query('SELECT * FROM skill_edges WHERE to_skill_id = $1 AND relationship_type = $2', [skillId, relationshipType])
+      : await pool.query('SELECT * FROM skill_edges WHERE to_skill_id = $1', [skillId]);
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching skill edges:', error);
+    return [];
+  }
+}
+
+// ==================== ROLE INTELLIGENCE PLATFORM (Phase 1) ====================
+// Not yet read by src/services.ts's live scoring - see src/matching/roleIntelligence.ts.
+
+export async function upsertRoleProfile(profile: {
+  role_key: string;
+  display_name: string;
+  mandatory_skills: string[];
+  preferred_skills: string[];
+  optional_skills: string[];
+  common_tools: string[];
+  typical_responsibilities: string[];
+  preferred_certifications: string[];
+  experience_band_min?: number | null;
+  experience_band_max?: number | null;
+  related_roles: string[];
+  career_progression: string[];
+  source?: string;
+}): Promise<RoleProfile | null> {
+  try {
+    const result = await pool.query(
+      `INSERT INTO role_profiles (
+         role_key, display_name, mandatory_skills, preferred_skills, optional_skills, common_tools,
+         typical_responsibilities, preferred_certifications, experience_band_min, experience_band_max,
+         related_roles, career_progression, source)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+       ON CONFLICT (role_key) DO UPDATE SET
+         display_name = EXCLUDED.display_name, mandatory_skills = EXCLUDED.mandatory_skills,
+         preferred_skills = EXCLUDED.preferred_skills, optional_skills = EXCLUDED.optional_skills,
+         common_tools = EXCLUDED.common_tools, typical_responsibilities = EXCLUDED.typical_responsibilities,
+         preferred_certifications = EXCLUDED.preferred_certifications,
+         experience_band_min = EXCLUDED.experience_band_min, experience_band_max = EXCLUDED.experience_band_max,
+         related_roles = EXCLUDED.related_roles, career_progression = EXCLUDED.career_progression,
+         source = EXCLUDED.source, updated_at = CURRENT_TIMESTAMP
+       RETURNING *`,
+      [
+        profile.role_key, profile.display_name, profile.mandatory_skills, profile.preferred_skills,
+        profile.optional_skills, profile.common_tools, profile.typical_responsibilities,
+        profile.preferred_certifications, profile.experience_band_min ?? null, profile.experience_band_max ?? null,
+        profile.related_roles, profile.career_progression, profile.source ?? 'seed',
+      ]
+    );
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error('Error upserting role profile:', error);
+    return null;
+  }
+}
+
+export async function getRoleProfileByKey(roleKey: string): Promise<RoleProfile | null> {
+  try {
+    const result = await pool.query('SELECT * FROM role_profiles WHERE role_key = $1', [roleKey]);
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error('Error fetching role profile:', error);
+    return null;
+  }
+}
+
+export async function getAllRoleProfiles(): Promise<RoleProfile[]> {
+  try {
+    const result = await pool.query('SELECT * FROM role_profiles ORDER BY display_name');
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching all role profiles:', error);
+    return [];
+  }
+}
+
+export async function updateRoleProfileEmbedding(id: number, embedding: number[]): Promise<void> {
+  try {
+    await pool.query('UPDATE role_profiles SET embedding = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', [embedding, id]);
+  } catch (error) {
+    console.error('Error updating role profile embedding:', error);
+  }
+}
+
+// ==================== CAREER TRAJECTORIES (Phase 8, §2.4 Career Intelligence) ====================
+// One row per candidate (UNIQUE candidate_id) - computed by src/matching/careerIntelligence/
+// computeCareerTrajectory.ts from candidates.work_history. Upsert-on-conflict so a re-parse
+// (updated work_history) simply recomputes and overwrites, never accumulates stale rows.
+export async function upsertCareerTrajectory(input: {
+  candidate_id: number;
+  company_id: number;
+  job_sequence: NormalizedJob[];
+  total_career_months: number | null;
+  role_count: number | null;
+  progression_type: ProgressionType | null;
+  seniority_level: SeniorityLevel | null;
+  seniority_trend: SeniorityTrend | null;
+  transitions: CareerTransition[];
+  avg_tenure_months: number | null;
+  median_tenure_months: number | null;
+  tenure_pattern: TenurePattern | null;
+  gaps: EmploymentGap[];
+  domain_concentration: number | null;
+  domains: DomainBreakdown[];
+  trajectory_embedding: number[];
+  predicted_next_roles: PredictedRole[];
+}): Promise<CareerTrajectory | null> {
+  try {
+    const result = await pool.query(
+      `INSERT INTO career_trajectories (
+         candidate_id, company_id, job_sequence, total_career_months, role_count,
+         progression_type, seniority_level, seniority_trend, transitions,
+         avg_tenure_months, median_tenure_months, tenure_pattern, gaps,
+         domain_concentration, domains, trajectory_embedding, predicted_next_roles
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+       ON CONFLICT (candidate_id) DO UPDATE SET
+         job_sequence = EXCLUDED.job_sequence, total_career_months = EXCLUDED.total_career_months,
+         role_count = EXCLUDED.role_count, progression_type = EXCLUDED.progression_type,
+         seniority_level = EXCLUDED.seniority_level, seniority_trend = EXCLUDED.seniority_trend,
+         transitions = EXCLUDED.transitions, avg_tenure_months = EXCLUDED.avg_tenure_months,
+         median_tenure_months = EXCLUDED.median_tenure_months, tenure_pattern = EXCLUDED.tenure_pattern,
+         gaps = EXCLUDED.gaps, domain_concentration = EXCLUDED.domain_concentration,
+         domains = EXCLUDED.domains, trajectory_embedding = EXCLUDED.trajectory_embedding,
+         predicted_next_roles = EXCLUDED.predicted_next_roles, updated_at = CURRENT_TIMESTAMP
+       RETURNING *`,
+      [
+        input.candidate_id, input.company_id, JSON.stringify(input.job_sequence), input.total_career_months, input.role_count,
+        input.progression_type, input.seniority_level, input.seniority_trend, JSON.stringify(input.transitions),
+        input.avg_tenure_months, input.median_tenure_months, input.tenure_pattern, JSON.stringify(input.gaps),
+        input.domain_concentration, JSON.stringify(input.domains), input.trajectory_embedding, JSON.stringify(input.predicted_next_roles),
+      ]
+    );
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error('Error upserting career trajectory:', error);
+    return null;
+  }
+}
+
+export async function getCareerTrajectory(candidateId: number, companyId: number): Promise<CareerTrajectory | null> {
+  try {
+    const result = await pool.query('SELECT * FROM career_trajectories WHERE candidate_id = $1 AND company_id = $2', [candidateId, companyId]);
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error('Error fetching career trajectory:', error);
+    return null;
+  }
+}
+
+export async function queryCareerTrajectoriesByProgressionType(companyId: number, progressionType: string): Promise<CareerTrajectory[]> {
+  try {
+    const result = await pool.query('SELECT * FROM career_trajectories WHERE company_id = $1 AND progression_type = $2', [companyId, progressionType]);
+    return result.rows;
+  } catch (error) {
+    console.error('Error querying career trajectories by progression type:', error);
+    return [];
+  }
+}
+
+// Bounded to one company - used by querySimilarTrajectories's in-memory cosine comparison
+// (pgvector remains uninstalled, same standing gap as everywhere else in this schema - see
+// src/matching/retrieval.ts's InMemoryCosineVectorSearchProvider for the identical pattern).
+export async function getAllCareerTrajectoriesForCompany(companyId: number): Promise<CareerTrajectory[]> {
+  try {
+    const result = await pool.query('SELECT * FROM career_trajectories WHERE company_id = $1', [companyId]);
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching all career trajectories for company:', error);
+    return [];
+  }
+}
+
+// ==================== REASONING LAYER (Phase 9, architecture doc §5.1) ====================
+// reasoning_conclusions holds a SET of rows per subject (unlike career_trajectories/
+// project_intelligence's single-JSONB-blob-per-subject pattern), so recomputation is a
+// transactional replace (delete every existing conclusion for the subject, insert the freshly
+// computed set) rather than a single-row upsert.
+export async function replaceReasoningConclusions(
+  subjectType: ConclusionSubjectType,
+  subjectId: number,
+  conclusions: DraftConclusion[]
+): Promise<ReasoningConclusion[]> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('DELETE FROM reasoning_conclusions WHERE subject_type = $1 AND subject_id = $2', [subjectType, subjectId]);
+
+    const inserted: ReasoningConclusion[] = [];
+    for (const c of conclusions) {
+      const result = await client.query(
+        `INSERT INTO reasoning_conclusions (
+           subject_type, subject_id, conclusion_text, conclusion_type, reasoning_type,
+           evidence_chain, conclusion_confidence, confidence_derivation, derived_from
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+         RETURNING *`,
+        [
+          subjectType, subjectId, c.conclusion_text, c.conclusion_type, c.reasoning_type,
+          JSON.stringify(c.evidence_chain), c.conclusion_confidence, c.confidence_derivation, c.derived_from,
+        ]
+      );
+      inserted.push(result.rows[0]);
+    }
+
+    await client.query('COMMIT');
+    return inserted;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Error replacing reasoning conclusions:', error);
+    return [];
+  } finally {
+    client.release();
+  }
+}
+
+export async function getReasoningConclusions(subjectType: ConclusionSubjectType, subjectId: number): Promise<ReasoningConclusion[]> {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM reasoning_conclusions WHERE subject_type = $1 AND subject_id = $2 ORDER BY conclusion_confidence DESC',
+      [subjectType, subjectId]
+    );
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching reasoning conclusions:', error);
+    return [];
+  }
+}
+
+export async function deleteReasoningConclusions(subjectType: ConclusionSubjectType, subjectId: number): Promise<void> {
+  try {
+    await pool.query('DELETE FROM reasoning_conclusions WHERE subject_type = $1 AND subject_id = $2', [subjectType, subjectId]);
+  } catch (error) {
+    console.error('Error deleting reasoning conclusions:', error);
+  }
+}
+
 // MODEL VERSIONS
 export async function getLatestModelVersion(): Promise<ModelVersion | null> {
   try {
@@ -1965,6 +3866,57 @@ export async function getActiveRefreshTokensForUser(userId: number): Promise<any
   }
 }
 
+// ==================== SESSION / OTP CLEANUP (Production Database Hardening, Phase 2) ====================
+// Deletes only rows that are already functionally dead - never anything a live session or a
+// still-valid OTP could depend on. A generous 30-day retention on revoked/expired rows (rather
+// than deleting the moment they expire) is deliberate, not arbitrary: auth.routes.ts's /refresh
+// handler detects refresh-token theft by checking whether an already-revoked token gets reused
+// (revoked_at IS NOT NULL on the presented token triggers revokeAllRefreshTokensForUser as a
+// defensive measure) - deleting a revoked row too early would silently disable that specific
+// defense for it (a replayed stolen token would just look like "not found" instead of triggering
+// the account-wide revocation). 30 days preserves that security property for a realistic window
+// while still bounding table growth. otp_verification rows are cleaned much sooner (24 hours)
+// since nothing reads an OTP after its 10-minute TTL except the 1-hour request-rate-limit lookback
+// in enforceOtpRequestLimits - 24 hours is a safe margin past both.
+const REVOKED_TOKEN_RETENTION_DAYS = 30;
+const OTP_RETENTION_HOURS = 24;
+
+export interface SessionCleanupResult {
+  refreshTokensDeleted: number;
+  candidateRefreshTokensDeleted: number;
+  otpRecordsDeleted: number;
+}
+
+export async function cleanupExpiredSessions(): Promise<SessionCleanupResult> {
+  const result: SessionCleanupResult = { refreshTokensDeleted: 0, candidateRefreshTokensDeleted: 0, otpRecordsDeleted: 0 };
+  try {
+    const r1 = await pool.query(
+      `DELETE FROM refresh_tokens
+       WHERE (revoked_at IS NOT NULL AND revoked_at < NOW() - ($1 || ' days')::interval)
+          OR (expires_at < NOW() - ($1 || ' days')::interval)`,
+      [REVOKED_TOKEN_RETENTION_DAYS]
+    );
+    result.refreshTokensDeleted = r1.rowCount ?? 0;
+
+    const r2 = await pool.query(
+      `DELETE FROM candidate_refresh_tokens
+       WHERE (revoked_at IS NOT NULL AND revoked_at < NOW() - ($1 || ' days')::interval)
+          OR (expires_at < NOW() - ($1 || ' days')::interval)`,
+      [REVOKED_TOKEN_RETENTION_DAYS]
+    );
+    result.candidateRefreshTokensDeleted = r2.rowCount ?? 0;
+
+    const r3 = await pool.query(
+      `DELETE FROM otp_verification WHERE expires_at < NOW() - ($1 || ' hours')::interval`,
+      [OTP_RETENTION_HOURS]
+    );
+    result.otpRecordsDeleted = r3.rowCount ?? 0;
+  } catch (error) {
+    console.error('Error cleaning up expired sessions/OTP records:', error);
+  }
+  return result;
+}
+
 // HEALTH CHECK
 export async function healthCheck(): Promise<boolean> {
   try {
@@ -2002,6 +3954,8 @@ export async function deleteJob(jobId: number, companyId: number): Promise<boole
 
     await client.query('DELETE FROM match_scores WHERE job_id = $1 AND company_id = $2', [jobId, companyId]);
     await client.query('DELETE FROM swipes WHERE job_id = $1 AND company_id = $2', [jobId, companyId]);
+    // reasoning_conclusions.subject_id has no FK (polymorphic - see deleteCandidate's comment).
+    await client.query('DELETE FROM reasoning_conclusions WHERE subject_type = $1 AND subject_id = $2', ['job', jobId]);
 
     const result = await client.query('DELETE FROM jobs WHERE id = $1 AND company_id = $2', [jobId, companyId]);
 
@@ -2016,6 +3970,242 @@ export async function deleteJob(jobId: number, companyId: number): Promise<boole
   }
 }
 
+// ==================== CANDIDATE SEARCH / TALENT DATABASE (Phase 7) ====================
+// Global read over candidate_accounts (no company_id scoping - see migration-candidate-search.sql
+// and the Phase 7 plan: candidate_accounts is deliberately company-agnostic, mirroring how
+// candidates already browse every company's jobs in Job Discovery). Only rows with
+// visible_to_recruiters = true, is_active = true, deleted_at IS NULL, and
+// onboarding_completed_at IS NOT NULL are ever returned - hidden/incomplete/deactivated accounts
+// are excluded server-side, never left to the client.
+
+export interface CandidateSearchFilters {
+  q?: string;
+  skills?: string[];
+  location?: string;
+  currentCompany?: string;
+  jobTitle?: string; // matched against headline, the existing "current title" field on candidate_accounts
+  education?: string;
+  certifications?: string[];
+  tools?: string[];
+  languages?: string[];
+  noticePeriod?: string;
+  minExperience?: number;
+  maxExperience?: number;
+  openToWork?: boolean;
+}
+
+const CANDIDATE_SEARCH_BASE_WHERE = `visible_to_recruiters = true AND is_active = true AND deleted_at IS NULL AND onboarding_completed_at IS NOT NULL`;
+
+// limit is a safety ceiling for the in-memory relevance-ranking/profile-strength-filtering step
+// in candidate-search.routes.ts's rankAndRespond (business logic this hardening pass does not
+// touch), not a page size - raised from 500 to 2000 as part of the Production Database Hardening
+// pass. Callers that need an accurate total independent of this ceiling should use
+// countCandidateSearchResults, not this function's row count.
+export async function searchCandidateAccounts(filters: CandidateSearchFilters, limit: number = 2000): Promise<CandidateAccount[]> {
+  try {
+    const { whereSql, params } = buildCandidateSearchWhere(filters);
+    const limitParam = `$${params.length + 1}`;
+    const query = `SELECT * FROM candidate_accounts WHERE ${whereSql} ORDER BY updated_at DESC LIMIT ${limitParam}`;
+    const result = await pool.query(query, [...params, limit]);
+    return result.rows;
+  } catch (error) {
+    console.error('Error searching candidate accounts:', error);
+    return [];
+  }
+}
+
+// Extracted from searchCandidateAccounts (Production Database Hardening pass) so the exact same
+// WHERE clause can back both the row fetch above and a real COUNT(*) below - previously the only
+// way to know "how many candidates match" was `searchCandidateAccounts(...).length`, which is
+// silently capped by whatever `limit` was passed (500, historically) regardless of how many rows
+// actually match. For any filter combination matching more than that cap, the reported total was
+// wrong and pages past the cap returned nothing even though more real matches existed - a
+// correctness bug, not just a performance one. countCandidateSearchResults below gives the true
+// count so the API's `total` is always accurate, independent of the fetch cap.
+function buildCandidateSearchWhere(filters: CandidateSearchFilters): { whereSql: string; params: any[] } {
+  const params: any[] = [];
+  const conditions: string[] = [CANDIDATE_SEARCH_BASE_WHERE];
+  const addParam = (val: any) => { params.push(val); return `$${params.length}`; };
+
+  if (filters.q) {
+    const term = addParam(`%${filters.q}%`);
+    conditions.push(`(name ILIKE ${term} OR headline ILIKE ${term} OR location ILIKE ${term} OR current_company ILIKE ${term} OR summary ILIKE ${term})`);
+  }
+  if (filters.skills && filters.skills.length > 0) {
+    conditions.push(`skills && ${addParam(filters.skills)}::text[]`);
+  }
+  if (filters.location) conditions.push(`location ILIKE ${addParam(`%${filters.location}%`)}`);
+  if (filters.currentCompany) conditions.push(`current_company ILIKE ${addParam(`%${filters.currentCompany}%`)}`);
+  if (filters.jobTitle) conditions.push(`headline ILIKE ${addParam(`%${filters.jobTitle}%`)}`);
+  if (filters.education) conditions.push(`education ILIKE ${addParam(`%${filters.education}%`)}`);
+  if (filters.certifications && filters.certifications.length > 0) {
+    conditions.push(`certifications && ${addParam(filters.certifications)}::text[]`);
+  }
+  if (filters.tools && filters.tools.length > 0) {
+    conditions.push(`tools && ${addParam(filters.tools)}::text[]`);
+  }
+  if (filters.languages && filters.languages.length > 0) {
+    conditions.push(`languages && ${addParam(filters.languages)}::text[]`);
+  }
+  if (filters.noticePeriod) conditions.push(`notice_period ILIKE ${addParam(`%${filters.noticePeriod}%`)}`);
+  if (filters.minExperience !== undefined) {
+    conditions.push(`NULLIF(regexp_replace(years_of_experience, '[^0-9.].*', ''), '')::numeric >= ${addParam(filters.minExperience)}`);
+  }
+  if (filters.maxExperience !== undefined) {
+    conditions.push(`NULLIF(regexp_replace(years_of_experience, '[^0-9.].*', ''), '')::numeric <= ${addParam(filters.maxExperience)}`);
+  }
+  if (filters.openToWork !== undefined) conditions.push(`open_to_work = ${addParam(filters.openToWork)}`);
+
+  return { whereSql: conditions.join(' AND '), params };
+}
+
+export async function countCandidateSearchResults(filters: CandidateSearchFilters): Promise<number> {
+  try {
+    const { whereSql, params } = buildCandidateSearchWhere(filters);
+    const result = await pool.query(`SELECT COUNT(*)::int AS count FROM candidate_accounts WHERE ${whereSql}`, params);
+    return result.rows[0]?.count ?? 0;
+  } catch (error) {
+    console.error('Error counting candidate search results:', error);
+    return 0;
+  }
+}
+
+export async function saveCandidateForRecruiter(recruiterUserId: number, companyId: number, candidateAccountId: number): Promise<boolean> {
+  try {
+    await pool.query(
+      `INSERT INTO saved_candidates (recruiter_user_id, company_id, candidate_account_id) VALUES ($1, $2, $3)
+       ON CONFLICT (recruiter_user_id, candidate_account_id) DO NOTHING`,
+      [recruiterUserId, companyId, candidateAccountId]
+    );
+    return true;
+  } catch (error) {
+    console.error('Error saving candidate:', error);
+    return false;
+  }
+}
+
+export async function removeSavedCandidate(recruiterUserId: number, candidateAccountId: number): Promise<boolean> {
+  try {
+    const result = await pool.query(
+      'DELETE FROM saved_candidates WHERE recruiter_user_id = $1 AND candidate_account_id = $2',
+      [recruiterUserId, candidateAccountId]
+    );
+    return (result.rowCount ?? 0) > 0;
+  } catch (error) {
+    console.error('Error removing saved candidate:', error);
+    return false;
+  }
+}
+
+export async function getSavedCandidateAccounts(recruiterUserId: number): Promise<CandidateAccount[]> {
+  try {
+    const result = await pool.query(
+      `SELECT ca.*, sc.created_at AS saved_at FROM saved_candidates sc
+       JOIN candidate_accounts ca ON ca.id = sc.candidate_account_id
+       WHERE sc.recruiter_user_id = $1
+       ORDER BY sc.created_at DESC`,
+      [recruiterUserId]
+    );
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching saved candidates:', error);
+    return [];
+  }
+}
+
+export async function getSavedCandidateAccountIds(recruiterUserId: number): Promise<Set<number>> {
+  try {
+    const result = await pool.query('SELECT candidate_account_id FROM saved_candidates WHERE recruiter_user_id = $1', [recruiterUserId]);
+    return new Set(result.rows.map((r) => r.candidate_account_id));
+  } catch (error) {
+    console.error('Error fetching saved candidate ids:', error);
+    return new Set();
+  }
+}
+
+export async function recordCandidateProfileView(recruiterUserId: number, companyId: number, candidateAccountId: number): Promise<void> {
+  try {
+    await pool.query(
+      `INSERT INTO candidate_profile_views (recruiter_user_id, company_id, candidate_account_id, viewed_at)
+       VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
+       ON CONFLICT (recruiter_user_id, candidate_account_id) DO UPDATE SET viewed_at = CURRENT_TIMESTAMP`,
+      [recruiterUserId, companyId, candidateAccountId]
+    );
+  } catch (error) {
+    console.error('Error recording candidate profile view:', error);
+  }
+}
+
+export async function getRecentlyViewedCandidateAccounts(recruiterUserId: number, limit: number = 50): Promise<CandidateAccount[]> {
+  try {
+    const result = await pool.query(
+      `SELECT ca.*, cpv.viewed_at FROM candidate_profile_views cpv
+       JOIN candidate_accounts ca ON ca.id = cpv.candidate_account_id
+       WHERE cpv.recruiter_user_id = $1
+       ORDER BY cpv.viewed_at DESC LIMIT $2`,
+      [recruiterUserId, limit]
+    );
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching recently viewed candidates:', error);
+    return [];
+  }
+}
+
+// "Shortlisted" reuses the EXISTING recruiter-review decision data (swipes.action = 1, i.e. the
+// same "Accepted" bucket recruiter-review.routes.ts already computes) rather than introducing a
+// second, parallel review/decision concept - only candidates linked to a candidate_accounts row
+// are relevant here (candidates.candidate_account_id IS NOT NULL), scoped to this company.
+export async function getShortlistedCandidateAccounts(companyId: number): Promise<CandidateAccount[]> {
+  try {
+    const result = await pool.query(
+      `SELECT DISTINCT ON (ca.id) ca.*, latest.timestamp AS shortlisted_at
+       FROM (
+         SELECT DISTINCT ON (candidate_id, job_id) *
+         FROM swipes
+         WHERE company_id = $1 AND action = 1
+         ORDER BY candidate_id, job_id, timestamp DESC, id DESC
+       ) latest
+       JOIN candidates c ON c.id = latest.candidate_id
+       JOIN candidate_accounts ca ON ca.id = c.candidate_account_id
+       WHERE c.candidate_account_id IS NOT NULL
+       ORDER BY ca.id, latest.timestamp DESC`,
+      [companyId]
+    );
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching shortlisted candidates:', error);
+    return [];
+  }
+}
+
+export async function getCandidateAccountLastActive(candidateAccountId: number): Promise<string | null> {
+  try {
+    const result = await pool.query(
+      'SELECT MAX(created_at) AS last_active FROM candidate_refresh_tokens WHERE candidate_id = $1',
+      [candidateAccountId]
+    );
+    return result.rows[0]?.last_active ?? null;
+  } catch (error) {
+    console.error('Error fetching candidate last active:', error);
+    return null;
+  }
+}
+
+export async function getCandidateAccountsLastActiveBulk(candidateAccountIds: number[]): Promise<Map<number, string>> {
+  if (candidateAccountIds.length === 0) return new Map();
+  try {
+    const result = await pool.query(
+      'SELECT candidate_id, MAX(created_at) AS last_active FROM candidate_refresh_tokens WHERE candidate_id = ANY($1::int[]) GROUP BY candidate_id',
+      [candidateAccountIds]
+    );
+    return new Map(result.rows.map((r) => [r.candidate_id, r.last_active]));
+  } catch (error) {
+    console.error('Error fetching bulk candidate last active:', error);
+    return new Map();
+  }
+}
+
 export const db = {
   getUsers,
   getUserById,
@@ -2024,6 +4214,32 @@ export const db = {
   createUser,
   updateUserPasswordHash,
   updateLastLogin,
+  getCandidateAccountById,
+  getCandidateAccountByEmail,
+  getCandidateAccountByPhone,
+  createCandidateAccount,
+  updateCandidateAccountPasswordHash,
+  updateCandidateProfile,
+  markCandidateOnboardingComplete,
+  getCandidateExperiences,
+  createCandidateExperience,
+  updateCandidateExperience,
+  deleteCandidateExperience,
+  searchCandidateAccounts,
+  countCandidateSearchResults,
+  saveCandidateForRecruiter,
+  removeSavedCandidate,
+  getSavedCandidateAccounts,
+  getSavedCandidateAccountIds,
+  recordCandidateProfileView,
+  getRecentlyViewedCandidateAccounts,
+  getShortlistedCandidateAccounts,
+  getCandidateAccountLastActive,
+  getCandidateAccountsLastActiveBulk,
+  createCandidateRefreshToken,
+  findCandidateRefreshTokenByHash,
+  revokeCandidateRefreshTokenByHash,
+  revokeAllCandidateRefreshTokensForCandidate,
   getUsersByCompany,
   getUserByIdForCompany,
   createUserByAdmin,
@@ -2059,7 +4275,10 @@ export const db = {
   revokeRefreshTokenByHash,
   revokeAllRefreshTokensForUser,
   getActiveRefreshTokensForUser,
+  cleanupExpiredSessions,
   getCandidates,
+  getCandidatesForJobScoring,
+  getCandidatesPaginated,
   getCandidateById,
   getCandidateByHash,
   getCandidatesByIds,
@@ -2084,12 +4303,41 @@ export const db = {
   getAllSwipesUnscoped,
   getAllCandidatesUnscoped,
   getAllJobsUnscoped,
+  getOpenJobsPublic,
+  getOpenJobByIdPublic,
   getUnusedSwipesForTraining,
   markSwipesAsUsedForTraining,
   getSwipeById,
   getRecruiterReviewList,
   getRecruiterReviewDetail,
   getShortlistedCandidateIds,
+  getJobCompanyId,
+  getOrCreateLinkedCandidateRow,
+  recordCandidateDecision,
+  getLatestCandidateDecision,
+  getCandidateDecisions,
+  getCandidateActiveDecisions,
+  evaluateAndCreateMutualMatch,
+  getLinkedCandidateAccountId,
+  getRecruiterDecisionForCandidateJob,
+  getCandidateLikedJobsForAnalytics,
+  getCandidateRecruiterReviewStats,
+  getCandidateProfileViewCount,
+  getCandidateApplicationStatusCounts,
+  getCandidateActivityTrend,
+  getCandidateMatches,
+  getRecruiterMatches,
+  syncApplicationStatusFromRecruiterDecision,
+  getCandidateApplications,
+  getCandidateApplication,
+  getCandidateNotifications,
+  getCandidateUnreadNotificationCount,
+  markCandidateNotificationRead,
+  markAllCandidateNotificationsRead,
+  getRecruiterNotifications,
+  getRecruiterUnreadNotificationCount,
+  markRecruiterNotificationRead,
+  markAllRecruiterNotificationsRead,
   getRecruiterReviewStats,
   upsertRecruiterNote,
   upsertDetailedScoringReport,
@@ -2104,6 +4352,44 @@ export const db = {
   getAnalyticsRecruiterProfile,
   getMatchScores,
   saveMatchScore,
+  saveMatchFeatures,
+  getMatchFeaturesForJob,
+  getMatchFeaturesAsOf,
+  saveLtrModelVersion,
+  getLatestLtrModelVersion,
+  saveEvaluationRun,
+  getEvaluationRuns,
+  getSwipesForEvaluation,
+  getAllApplicationStatusLinkedToCandidatesUnscoped,
+  upsertSkillNode,
+  getSkillNodeByCanonical,
+  getSkillNodeById,
+  findSkillNodeByAlias,
+  getAllSkillNodes,
+  updateSkillNodePopularity,
+  updateSkillNodeEmbedding,
+  getSkillDiscoveryProposalByToken,
+  getSkillDiscoveryProposalById,
+  createSkillDiscoveryProposal,
+  updateSkillDiscoveryProposal,
+  getPendingSkillDiscoveryProposals,
+  getAllCandidateSkillArrays,
+  getAllJobRequiredSkills,
+  upsertSkillEdge,
+  getSkillEdgesFrom,
+  getSkillEdgesTo,
+  getAllSkillEdges,
+  upsertCareerTrajectory,
+  getCareerTrajectory,
+  queryCareerTrajectoriesByProgressionType,
+  getAllCareerTrajectoriesForCompany,
+  replaceReasoningConclusions,
+  getReasoningConclusions,
+  deleteReasoningConclusions,
+  upsertRoleProfile,
+  getRoleProfileByKey,
+  getAllRoleProfiles,
+  updateRoleProfileEmbedding,
   getLatestModelVersion,
   saveModelVersion,
   getDailyStats,

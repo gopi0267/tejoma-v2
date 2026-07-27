@@ -1,13 +1,23 @@
 import { Router } from 'express';
 import { db } from '../db.js';
-import { calculateMatchScoresBatch } from '../services.js';
 import { broadcastEvent } from '../realtime.js';
 import { requireAuth, requireRole } from '../middleware/auth.middleware.js';
 import { indexJobInBackground, removeJobFromIndex } from '../rag.service.js';
 import { indexJobEmbeddingInBackground } from '../matching/embeddingIndex.js';
+import { rankCandidatesForJob } from '../matching/matchingApi.js';
+import { discoverUnknownSkillsInBackground } from '../matching/unknownSkillDiscovery.js';
+import { computeReasoningForJobInBackground } from '../matching/reasoning/computeReasoning.js';
+import type { Job } from '../types.js';
 
 const router = Router();
 router.use(requireAuth, requireRole('recruiter', 'admin'));
+
+// Enterprise AI Matching Architecture, Phase 4 - Unknown Skill Discovery's "context" for a
+// JD-sourced token, same composition embeddingIndex.ts's buildJobFacetTexts already uses for the
+// "responsibilities" facet.
+function jobDiscoveryContext(job: Job): string {
+  return [...(job.responsibilities || []), job.job_summary].filter((t): t is string => Boolean(t && t.trim())).join('. ');
+}
 
 router.get('/jobs', async (req, res) => {
     const companyId = req.user!.company_id;
@@ -93,6 +103,8 @@ router.post('/jobs', async (req, res) => {
       if (newJob) {
         indexJobInBackground(newJob);
         indexJobEmbeddingInBackground(newJob);
+        discoverUnknownSkillsInBackground(newJob.required_skills, jobDiscoveryContext(newJob), 'jd');
+        computeReasoningForJobInBackground(newJob.id, newJob.required_skills, newJob.optional_skills);
       }
       res.status(201).json(newJob);
     } catch (error: any) {
@@ -109,18 +121,25 @@ router.get('/jobs/:id', async (req, res) => {
       return res.status(404).json({ error: 'Job not found' });
     }
 
-    const candidates = await db.getCandidates(companyId);
-    // Batched: one round-trip to the ML ensemble for the whole candidate pool, not one per
-    // candidate - matters once there are more than a handful of candidates to score.
-    const scores = await calculateMatchScoresBatch(job, candidates, { skipGeminiSummary: true });
-    const matchedCandidates = candidates.map((candidate, i) => ({
+    // Enterprise AI Matching Architecture, Phase 0: structured pre-filter ahead of scoring
+    // (db.getCandidatesForJobScoring - a bounded, recall-first prioritization, not a hard
+    // exclusion filter; see its doc comment) + the Unified Matching API's 'full' tier, which is
+    // the exact same calculateMatchScoresBatch pipeline this endpoint already called directly -
+    // no scoring behavior change, only where the candidate pool is bounded and where the scoring
+    // call itself lives.
+    const candidates = await db.getCandidatesForJobScoring(companyId, job.required_skills);
+    const ranked = await rankCandidatesForJob(job, candidates, {
+      tier: 'full',
+      skipGeminiSummary: true,
+      persist: { companyId, source: 'job_detail' },
+    });
+    const matchedCandidates = ranked.map(({ candidate, match_score, score }) => ({
       candidate,
-      match_score: scores[i].final_score,
-      breakdown: scores[i].breakdown,
-      summary: scores[i].summary,
+      match_score,
+      breakdown: score!.breakdown,
+      summary: score!.summary,
     }));
-    matchedCandidates.sort((a, b) => b.match_score - a.match_score);
-  
+
     res.json({ job, matched_candidates: matchedCandidates });
 });
   
@@ -153,6 +172,8 @@ router.put('/jobs/:id', async (req, res) => {
       // the chatbot and semantic matching would silently keep using stale pre-edit content.
       indexJobInBackground(updated);
       indexJobEmbeddingInBackground(updated);
+      discoverUnknownSkillsInBackground(updated.required_skills, jobDiscoveryContext(updated), 'jd');
+      computeReasoningForJobInBackground(updated.id, updated.required_skills, updated.optional_skills);
 
       res.json(updated);
     } catch (error: any) {

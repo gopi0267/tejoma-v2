@@ -15,6 +15,7 @@ uploads/*
 resumes/
 resumedata.csv
 db_store.json
+*.dump
 
 # Local tool/editor state - not shared project config
 .claude/

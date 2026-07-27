@@ -1,10 +1,18 @@
 import { Request, Response, NextFunction } from 'express';
-import { verifyAccessToken, ACCESS_TOKEN_COOKIE, AccessTokenPayload } from '../utils/tokens.js';
+import {
+  verifyAccessToken,
+  ACCESS_TOKEN_COOKIE,
+  AccessTokenPayload,
+  verifyCandidateAccessToken,
+  CANDIDATE_ACCESS_TOKEN_COOKIE,
+  CandidateTokenPayload,
+} from '../utils/tokens.js';
 
 declare global {
   namespace Express {
     interface Request {
       user?: AccessTokenPayload;
+      candidate?: CandidateTokenPayload;
     }
   }
 }
@@ -54,4 +62,35 @@ export function requireRole(...allowedRoles: string[]) {
     }
     next();
   };
+}
+
+// ==================== CANDIDATE AUTH ====================
+// Fully separate from requireAuth/requireRole/ROLE_HIERARCHY above - a candidate session is
+// never a req.user, and no candidate route reads or checks req.user's role.
+
+function extractCandidateToken(req: Request): string | null {
+  const cookieToken = req.cookies?.[CANDIDATE_ACCESS_TOKEN_COOKIE];
+  if (cookieToken) return cookieToken;
+
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    return authHeader.slice(7);
+  }
+  return null;
+}
+
+/** Verifies the candidate access token (cookie, or Authorization header as a fallback) and attaches req.candidate. */
+export function requireCandidateAuth(req: Request, res: Response, next: NextFunction) {
+  const token = extractCandidateToken(req);
+  if (!token) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
+  const payload = verifyCandidateAccessToken(token);
+  if (!payload) {
+    return res.status(401).json({ error: 'Invalid or expired session' });
+  }
+
+  req.candidate = payload;
+  next();
 }

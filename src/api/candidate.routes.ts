@@ -4,6 +4,19 @@ import { Candidate } from '../types.js';
 import { requireAuth, requireRole } from '../middleware/auth.middleware.js';
 import { indexCandidateInBackground, removeCandidateFromIndex } from '../rag.service.js';
 import { indexCandidateEmbeddingInBackground } from '../matching/embeddingIndex.js';
+import { computeCandidateConfidence } from '../matching/confidenceService.js';
+import { discoverUnknownSkillsInBackground } from '../matching/unknownSkillDiscovery.js';
+import { computeAndStoreProjectIntelligenceInBackground } from '../matching/projectIntelligence.js';
+import { computeCareerTrajectoryInBackground } from '../matching/careerIntelligence/computeCareerTrajectory.js';
+import { computeReasoningForCandidateInBackground } from '../matching/reasoning/computeReasoning.js';
+
+// Enterprise AI Matching Architecture, Phase 4 - Unknown Skill Discovery's "context" for a
+// resume-sourced token, same composition embeddingIndex.ts's buildCandidateFacetTexts already
+// uses for the "responsibilities" facet (projects + summary - the free text most likely to
+// disambiguate a short, ambiguous skill token).
+function candidateDiscoveryContext(candidate: Candidate): string {
+  return [candidate.projects, candidate.resume_summary].filter((t) => t && t.trim()).join('. ');
+}
 
 const router = Router();
 router.use(requireAuth, requireRole('recruiter', 'admin'));
@@ -25,15 +38,25 @@ const toText = (val: any): string => {
 };
 
 function candidatePayloadFromExtracted(cand: Partial<Candidate>, companyId: number): Omit<Candidate, 'id' | 'created_at' | 'updated_at'> {
+  const skills = toArray(cand.skills);
+  const years_of_experience = toText(cand.years_of_experience);
+  const resume_text = toText(cand.resume_text) || `${toText(cand.name)} - ${toText(cand.current_job_title)}`;
+  const highest_qualification = toText(cand.highest_qualification);
+  const university = toText(cand.university);
+  const graduation_year = toText(cand.graduation_year);
+  const projects = toText(cand.projects);
+  const ai_confidence_score = toText(cand.ai_confidence_score);
+  const extraction_status = cand.extraction_status || 'Complete';
+
   return {
     company_id: companyId,
     name: toText(cand.name),
     email: toText(cand.email),
     phone: toText(cand.phone),
-    skills: toArray(cand.skills),
+    skills,
     primary_skills: toText(cand.primary_skills),
     secondary_skills: toText(cand.secondary_skills),
-    years_of_experience: toText(cand.years_of_experience),
+    years_of_experience,
     current_location: toText(cand.current_location),
     preferred_location: toText(cand.preferred_location),
     current_company: toText(cand.current_company),
@@ -41,11 +64,11 @@ function candidatePayloadFromExtracted(cand: Partial<Candidate>, companyId: numb
     current_job_title: toText(cand.current_job_title),
     industry_domain: toText(cand.industry_domain),
     education: toText(cand.education),
-    highest_qualification: toText(cand.highest_qualification),
-    graduation_year: toText(cand.graduation_year),
-    university: toText(cand.university),
+    highest_qualification,
+    graduation_year,
+    university,
     certifications: toArray(cand.certifications),
-    projects: toText(cand.projects),
+    projects,
     technical_tools: toText(cand.technical_tools),
     languages_known: toText(cand.languages_known),
     current_ctc: toText(cand.current_ctc),
@@ -55,12 +78,27 @@ function candidatePayloadFromExtracted(cand: Partial<Candidate>, companyId: numb
     linkedin_url: toText(cand.linkedin_url),
     github_or_portfolio_url: toText(cand.github_or_portfolio_url),
     resume_summary: toText(cand.resume_summary),
-    resume_text: toText(cand.resume_text) || `${toText(cand.name)} - ${toText(cand.current_job_title)}`,
-    ai_confidence_score: toText(cand.ai_confidence_score),
-    extraction_status: cand.extraction_status || 'Complete',
+    resume_text,
+    ai_confidence_score,
+    extraction_status,
     resume_file_path: cand.resume_file_path,
     candidate_hash: cand.candidate_hash,
     resume_embedding: cand.resume_embedding,
+    // Enterprise AI Matching Architecture, Phase 1 - Confidence Architecture. Computed from the
+    // already-normalized fields above (never calls the parser, never changes what it returns) -
+    // see src/matching/confidenceService.ts for the per-entity reasoning.
+    confidence_profile: computeCandidateConfidence({
+      skills, years_of_experience, resume_text, highest_qualification, university,
+      graduation_year, projects, ai_confidence_score, extraction_status,
+    }),
+    // Enterprise AI Matching Architecture, Phase 5 prerequisite - passed through as-is from
+    // parser.service.ts's already-normalized/validated arrays (see its normalizeWorkHistory/
+    // normalizeProjectEntries). Undefined (not an empty array) when the caller didn't supply
+    // either at all - e.g. a candidate created through a path other than the parsed-resume flow -
+    // so db.createCandidate's JSONB write can distinguish "genuinely never parsed" from "parsed,
+    // found nothing."
+    work_history: Array.isArray(cand.work_history) ? cand.work_history : undefined,
+    project_entries: Array.isArray(cand.project_entries) ? cand.project_entries : undefined,
   };
 }
 
@@ -81,6 +119,10 @@ router.post('/candidates', async (req, res) => {
       if (newCandidate) {
         indexCandidateInBackground(newCandidate);
         indexCandidateEmbeddingInBackground(newCandidate);
+        discoverUnknownSkillsInBackground(newCandidate.skills, candidateDiscoveryContext(newCandidate), 'resume');
+        computeAndStoreProjectIntelligenceInBackground(newCandidate.id, newCandidate.company_id, newCandidate.project_entries);
+        computeCareerTrajectoryInBackground(newCandidate.id, newCandidate.company_id, newCandidate.work_history);
+        computeReasoningForCandidateInBackground(newCandidate.id, newCandidate.skills, newCandidate.project_entries);
       }
 
       res.status(201).json(newCandidate);
@@ -135,6 +177,10 @@ router.post('/bulk-upload-candidates', async (req, res) => {
           }
           indexCandidateInBackground(created);
           indexCandidateEmbeddingInBackground(created);
+          discoverUnknownSkillsInBackground(created.skills, candidateDiscoveryContext(created), 'resume');
+          computeAndStoreProjectIntelligenceInBackground(created.id, created.company_id, created.project_entries);
+          computeCareerTrajectoryInBackground(created.id, created.company_id, created.work_history);
+          computeReasoningForCandidateInBackground(created.id, created.skills, created.project_entries);
           insertedCount++;
         } catch (dbError: any) {
           console.error(`DB insert failed for ${cand.email}:`, dbError.message);
@@ -175,6 +221,10 @@ router.post('/candidates/import', async (req, res) => {
           if (newCandidate) {
             indexCandidateInBackground(newCandidate);
             indexCandidateEmbeddingInBackground(newCandidate);
+            discoverUnknownSkillsInBackground(newCandidate.skills, candidateDiscoveryContext(newCandidate), 'resume');
+            computeAndStoreProjectIntelligenceInBackground(newCandidate.id, newCandidate.company_id, newCandidate.project_entries);
+            computeCareerTrajectoryInBackground(newCandidate.id, newCandidate.company_id, newCandidate.work_history);
+            computeReasoningForCandidateInBackground(newCandidate.id, newCandidate.skills, newCandidate.project_entries);
           }
 
           importedCandidates.push(newCandidate);

@@ -27,7 +27,40 @@ const RETRY_BASE_DELAY_MS = 2000;
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 // Gemini's structured-output schema (its equivalent of Ollama's `format` JSON-schema constraint).
-// Mirrors the same 31-column master sequence so every field is forced to be present in the response.
+// Mirrors the same 32-column master sequence so every field is forced to be present in the response.
+//
+// Work_History/Project_Entries (Enterprise AI Matching Architecture, Phase 5 prerequisite) are
+// additive - every field above them is completely unchanged from before this phase, both in
+// schema shape and in the prompt language describing them. These two are structured, DATED data
+// (§2.2 Skill Recency, §2.3 Project Intelligence Graph, §2.4 Career Intelligence in the
+// architecture doc all need per-role/per-project date ranges, which nothing before this phase
+// ever captured - Current_Company/Previous_Companies/Projects above are undated by design and
+// remain exactly as they were). Required (so the model must always attempt them) but the arrays
+// themselves may legitimately be empty - never forced to guess a date that isn't in the text.
+const WORK_HISTORY_ITEM_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    company: { type: Type.STRING, nullable: true },
+    title: { type: Type.STRING, nullable: true },
+    start_date: { type: Type.STRING, nullable: true },
+    end_date: { type: Type.STRING, nullable: true },
+    is_current: { type: Type.BOOLEAN },
+  },
+  required: ['company', 'title', 'start_date', 'end_date', 'is_current'],
+};
+
+const PROJECT_ENTRY_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    name: { type: Type.STRING, nullable: true },
+    description: { type: Type.STRING, nullable: true },
+    technologies: { type: Type.ARRAY, items: { type: Type.STRING } },
+    start_date: { type: Type.STRING, nullable: true },
+    end_date: { type: Type.STRING, nullable: true },
+  },
+  required: ['name', 'description', 'technologies', 'start_date', 'end_date'],
+};
+
 const RESPONSE_SCHEMA = {
   type: Type.OBJECT,
   properties: {
@@ -61,6 +94,8 @@ const RESPONSE_SCHEMA = {
     Resume_Summary: { type: Type.STRING, nullable: true },
     AI_Confidence_Score: { type: Type.STRING, nullable: true },
     Data_Status: { type: Type.STRING, nullable: true },
+    Work_History: { type: Type.ARRAY, items: WORK_HISTORY_ITEM_SCHEMA },
+    Project_Entries: { type: Type.ARRAY, items: PROJECT_ENTRY_SCHEMA },
   },
   required: [
     'Name', 'Email', 'Phone', 'Skills', 'Primary_Skills', 'Secondary_Skills',
@@ -69,13 +104,13 @@ const RESPONSE_SCHEMA = {
     'Highest_Qualification', 'Graduation_Year', 'University', 'Certifications',
     'Projects', 'Technical_Tools', 'Languages_Known', 'Current_CTC', 'Expected_CTC',
     'Notice_Period', 'Willingness_to_Relocate', 'LinkedIn_URL', 'GitHub_or_Portfolio_URL',
-    'Resume_Summary', 'AI_Confidence_Score', 'Data_Status',
+    'Resume_Summary', 'AI_Confidence_Score', 'Data_Status', 'Work_History', 'Project_Entries',
   ],
 };
 
 const SYSTEM_INSTRUCTION = `You are an elite, production-grade Resume Parsing AI. Your absolute core directive is ZERO DATA LOSS. Missing, omitting, or truncating details or lists directly results in revenue loss for our company. You must extract every single item, word, and technical detail with 100% fidelity.
 
-Analyze the raw resume text provided at the end and map the data precisely into a single, valid JSON object following the 30-column schema specified below (Resume_Text is added programmatically afterward, not by you).
+Analyze the raw resume text provided at the end and map the data precisely into a single, valid JSON object following the 32-column schema specified below (Resume_Text is added programmatically afterward, not by you).
 
 EXTRACTION LAWS:
 1. DO NOT TRUNCATE OR SUMMARIZE arrays or skill sections (Never use "...", "etc.", or "and others"). If a candidate lists 50 tools, you must extract all 50.
@@ -87,13 +122,15 @@ EXTRACTION LAWS:
    b. ONLY IF no such explicit statement exists anywhere in the text, calculate it yourself from the chronological employment blocks (e.g., '2023 - 2026' or '06.2023 - Present'). Do NOT assume "Present"/"Till date"/"Current" means today's real-world date - resumes are historical documents that may have been written years ago. Instead, treat the LATEST year mentioned anywhere in the resume's own employment history as the effective "Present" for that calculation, so you don't inflate experience for an old resume. Sum the durations and output a clear number or string (e.g., '3 Years').
    NEVER fall back to 'Not specified' if either an explicit statement or dates are present anywhere in the text.
 6. IMPLICIT FEATURE DEDUCTION: If any secondary feature is implicit in the text (such as Location inferred from a known local company name), you must deduce it rather than outputting null.
-7. ROW-BY-ROW SCHEMA ALIGNMENT: Ensure strict row-by-row structural alignment matching our exact master sequence: Name, Email, Phone, Skills, Primary_Skills, Secondary_Skills, Years_of_Experience, Current_Location, Preferred_Location, Current_Company, Previous_Companies, Current_Job_Title, Industry_Domain, Education, Highest_Qualification, Graduation_Year, University, Certifications, Projects, Technical_Tools, Languages_Known, Current_CTC, Expected_CTC, Notice_Period, Willingness_to_Relocate, LinkedIn_URL, GitHub_or_Portfolio_URL, Resume_Summary, AI_Confidence_Score, Data_Status.
+7. ROW-BY-ROW SCHEMA ALIGNMENT: Ensure strict row-by-row structural alignment matching our exact master sequence: Name, Email, Phone, Skills, Primary_Skills, Secondary_Skills, Years_of_Experience, Current_Location, Preferred_Location, Current_Company, Previous_Companies, Current_Job_Title, Industry_Domain, Education, Highest_Qualification, Graduation_Year, University, Certifications, Projects, Technical_Tools, Languages_Known, Current_CTC, Expected_CTC, Notice_Period, Willingness_to_Relocate, LinkedIn_URL, GitHub_or_Portfolio_URL, Resume_Summary, AI_Confidence_Score, Data_Status, Work_History, Project_Entries.
 8. VERBATIM COPY RULE (NO AUTOCORRECT): You are forbidden from normalizing, correcting, or abbreviating email addresses. You must perform VERBATIM EXTRACTION. The email string must be character-for-character identical to the text provided in the resume. Never truncate, never guess, and never use common-word patterns to shorten names. The contact group (Email, Phone, LinkedIn_URL, GitHub_or_Portfolio_URL) must follow this strict verbatim extraction law.
 9. SKILL EXTRACTION AUDIT: Perform an aggressive keyword audit on the Skills, Primary_Skills, and Technical_Tools fields. Ensure advanced variations and industry roles (like 'Salesforce QA', 'SDET', 'Automation Testing', 'SDET-Automation') are explicitly maintained instead of being collapsed into a generic tool word. Do not drop any skill that appears anywhere in the resume text, including ones mentioned only once in a sentence rather than listed in a dedicated "Skills" section.
 10. EMPLOYER vs CLIENT DISAMBIGUATION (critical for staffing/consulting-style resumes): Many resumes (especially IT consulting/staffing formats) list project blocks with BOTH a "Client:"/"Customer:" name AND an "Organization:"/"Employer:"/"Company:" name. The "Client" is who the work was performed FOR (an end customer), NOT who employed the candidate. Current_Company and Previous_Companies must contain ONLY the actual employer/organization names (deduplicated - if the same employer appears across multiple project blocks, list it once), NEVER the client names. Client names belong only in the Projects field, not in Current_Company/Previous_Companies.
-11. Current_Company is the employer of the MOST RECENT/current role (e.g. still "Till date"/"Present", or the latest date range). Previous_Companies is every OTHER distinct past employer, semicolon-separated, excluding whichever one you already placed in Current_Company.`;
+11. Current_Company is the employer of the MOST RECENT/current role (e.g. still "Till date"/"Present", or the latest date range). Previous_Companies is every OTHER distinct past employer, semicolon-separated, excluding whichever one you already placed in Current_Company.
+12. WORK_HISTORY (structured, dated - separate from and in addition to Current_Company/Previous_Companies above, which stay exactly as already specified): one array entry per distinct employment block in the resume, each with company, title, start_date, end_date, is_current. Dates MUST be formatted as "YYYY-MM" (e.g. "2021-06") when the resume states a month and year; if only a year is given, do NOT invent a month like "YYYY-01" - instead set start_date/end_date to just "YYYY" (four digits only, no fabricated month). If a date cannot be determined at all, use JSON null - never guess a date the text does not support. is_current is true only for a role explicitly marked "Present"/"Till date"/"Current" (or with no end date and it is the most recent block); end_date must be null whenever is_current is true, never a fabricated date. If the resume states no parseable employment dates anywhere, return an empty array [], not fabricated entries.
+13. PROJECT_ENTRIES (structured, decomposed - separate from and in addition to the flat Projects string field above, which stays exactly as already specified and must still contain the full original project text): decompose the same project information into individual entries, one per distinct project, each with name, description (a concise 1-3 sentence summary of what the project involved, drawn only from the resume's own text - never invented), technologies (the specific technologies/tools/frameworks named in connection with that project, as an array), start_date, end_date (same "YYYY-MM"/"YYYY"/null format and no-fabrication rule as Work_History above - most resumes do not date individual projects, and null is the correct, expected answer far more often than not). If the resume's project section cannot be reasonably split into distinct projects (e.g. it is truly one continuous undifferentiated block), return a single entry covering it rather than fabricating an artificial split. If there is no project information at all, return an empty array [].`;
 
-const AUDIT_SYSTEM_INSTRUCTION = `You are a meticulous Resume Extraction Auditor. You will be given the ORIGINAL raw resume text and a DRAFT JSON extraction of it (30 fields). Your job is to re-read the original text line by line and correct the draft, NOT to start over blindly.
+const AUDIT_SYSTEM_INSTRUCTION = `You are a meticulous Resume Extraction Auditor. You will be given the ORIGINAL raw resume text and a DRAFT JSON extraction of it (32 fields). Your job is to re-read the original text line by line and correct the draft, NOT to start over blindly.
 
 RULES:
 1. Treat the draft as a first attempt that may have MISSED skills, tools, certifications, previous companies, or miscalculated Years_of_Experience. Cross-check every field against the raw text.
@@ -102,10 +139,11 @@ RULES:
 4. Re-verify Email and Phone are character-for-character identical to what appears in the raw text (verbatim, no autocorrect). If the draft altered them, restore the exact original text.
 5. If the draft is already fully correct and complete for a field, keep it unchanged - do not invent new values that are not supported by the text.
 6. Re-verify Current_Company/Previous_Companies contain ONLY actual employer/organization names, never "Client:"/"Customer:" names from project blocks (those belong only in Projects). If the draft mistakenly included a client name as a company, remove it. Ensure Previous_Companies is semicolon-separated with each distinct past employer listed once.
-7. Output the corrected, complete 30-field JSON object using the exact same schema and field names as the draft. Never use "...", "etc." or truncate lists.`;
+7. Re-verify Work_History against the raw text: every employment block you can identify should have a corresponding entry, with dates matching the "YYYY-MM"/"YYYY"/null rules (never a fabricated month). Re-verify Project_Entries similarly - add a missed project, but never invent technologies or dates a project's own text doesn't support. If the draft left either array empty when the text clearly supports entries, populate it; if the draft fabricated a date, correct it to null rather than removing the entry.
+8. Output the corrected, complete 32-field JSON object using the exact same schema and field names as the draft. Never use "...", "etc." or truncate lists.`;
 
 function buildExtractionPrompt(resumeText: string): string {
-  return `Parse the raw resume text provided at the end and map the data precisely into a single, valid JSON object matching the 30-column required schema parameters.
+  return `Parse the raw resume text provided at the end and map the data precisely into a single, valid JSON object matching the 32-column required schema parameters.
 
 CRITICAL OUTPUT CONSTRAINT:
 Return ONLY the raw JSON object matching the provided schema. Do not provide introductory or concluding conversational prose.
@@ -238,6 +276,58 @@ export async function parseResume(resumeText: string, options?: { maxRetries?: n
       return s.split(sep).map(item => item.trim()).filter(item => item);
     };
 
+    // Enterprise AI Matching Architecture, Phase 5 prerequisite - Work_History/Project_Entries
+    // come back as structured arrays (not strings), so they need their own normalization rather
+    // than getField/parseList. Never trusts the model's date formatting blindly: anything that
+    // isn't "YYYY-MM" or "YYYY" is dropped to null rather than stored as an unparseable string -
+    // the same "never guess" discipline the rest of this file already applies to text fields.
+    const DATE_PATTERN = /^\d{4}(-\d{2})?$/;
+    const normalizeDateField = (val: any): string | null => {
+      if (val === undefined || val === null) return null;
+      const s = String(val).trim();
+      if (s === '' || s.toLowerCase() === 'null') return null;
+      return DATE_PATTERN.test(s) ? s : null;
+    };
+    const normalizeText = (val: any): string | null => {
+      if (typeof val !== 'string') return null;
+      const s = val.trim();
+      return s === '' || s.toLowerCase() === 'null' ? null : s;
+    };
+    const normalizeWorkHistory = (val: any) => {
+      if (!Array.isArray(val)) return [];
+      return val
+        .filter((item) => item && typeof item === 'object')
+        .map((item) => ({
+          company: normalizeText(item.company),
+          title: normalizeText(item.title),
+          start_date: normalizeDateField(item.start_date),
+          end_date: normalizeDateField(item.end_date),
+          is_current: Boolean(item.is_current),
+        }))
+        .filter((entry) => entry.company || entry.title); // neither present - not a usable entry
+    };
+    const normalizeProjectEntries = (val: any) => {
+      if (!Array.isArray(val)) return [];
+      return val
+        .filter((item) => item && typeof item === 'object')
+        .map((item) => ({
+          name: normalizeText(item.name),
+          description: normalizeText(item.description) || '',
+          technologies: Array.isArray(item.technologies)
+            ? item.technologies.map((t: any) => String(t).trim()).filter((t: string) => t)
+            : [],
+          start_date: normalizeDateField(item.start_date),
+          end_date: normalizeDateField(item.end_date),
+        }))
+        .filter((entry) => entry.name || entry.description); // neither present - not a usable entry
+    };
+    // Prefer Pass 2 (audit) when it produced a non-empty array; fall back to Pass 1's draft
+    // rather than silently losing entries if the audit pass returned an empty array for a field
+    // it didn't actually re-examine (same "don't let pass 2 silently drop what pass 1 found"
+    // reasoning already applied to Skills above).
+    const workHistoryVal = normalizeWorkHistory(finalResult?.Work_History?.length ? finalResult.Work_History : draftResult?.Work_History);
+    const projectEntriesVal = normalizeProjectEntries(finalResult?.Project_Entries?.length ? finalResult.Project_Entries : draftResult?.Project_Entries);
+
     // Merge skills from both passes (union, de-duplicated case-insensitively) so a skill either
     // pass caught is kept, rather than letting Pass 2 silently drop something Pass 1 found.
     const allSkillsList: string[] = [];
@@ -327,7 +417,9 @@ export async function parseResume(resumeText: string, options?: { maxRetries?: n
       resume_summary: getField('Resume_Summary'),
       resume_text: resumeText,
       ai_confidence_score: getField('AI_Confidence_Score') || '90%',
-      extraction_status: dataStatus
+      extraction_status: dataStatus,
+      work_history: workHistoryVal,
+      project_entries: projectEntriesVal,
     };
   } catch (error) {
     console.error('Error parsing resume with Gemini:', error);
@@ -370,6 +462,10 @@ function getFallbackData(resumeText: string) {
     resume_summary: null,
     resume_text: resumeText,
     ai_confidence_score: '50%',
-    extraction_status: 'Partial'
+    extraction_status: 'Partial',
+    // The regex-only fallback path has no way to reliably derive structured, dated history -
+    // empty arrays are the honest answer here, not an attempt to regex-guess dates.
+    work_history: [],
+    project_entries: [],
   };
 }
