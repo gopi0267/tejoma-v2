@@ -25,7 +25,7 @@ import { requireAuth, requireRole } from '../middleware/auth.middleware.js';
 import * as monolithClient from '../services/monolithClient.js';
 import { getCandidatesForJobScoring, getCandidateCount } from '../services/candidateCoreServiceClient.js';
 import { rankCandidatesForJob } from '../services/matchingScoringServiceClient.js';
-import { getSwipeCountsByJob, refreshRecruiterReviewViewForJob } from '../services/matchingDecisionServiceClient.js';
+import { getSwipeCountsByJob, refreshRecruiterReviewViewForJobs } from '../services/matchingDecisionServiceClient.js';
 import { jobPayloadFromBody, jobUpdatePayloadFromBody } from '../services/jobPayload.js';
 import { logger } from '../utils/logger.js';
 
