@@ -257,6 +257,58 @@ export async function updateExtractionJob(
   }
 }
 
+// ==================== candidate_resume_files ====================
+// Item 5: Candidate resume file metadata (migrated from monolith candidate_accounts)
+
+export interface CandidateResumeFile {
+  id: number;
+  candidate_id: number;
+  company_id: number;
+  resume_file_path: string | null;
+  resume_original_filename: string | null;
+  resume_file_uploaded_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function getCandidateResumeFile(candidateId: number): Promise<CandidateResumeFile | null> {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM resume_service.candidate_resume_files WHERE candidate_id = $1',
+      [candidateId]
+    );
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error('Error fetching candidate resume file:', error);
+    return null;
+  }
+}
+
+export async function upsertCandidateResumeFile(candidateId: number, companyId: number, data: {
+  resume_file_path?: string | null;
+  resume_original_filename?: string | null;
+  resume_file_uploaded_at?: string | null;
+}): Promise<CandidateResumeFile | null> {
+  try {
+    const result = await pool.query(
+      `INSERT INTO resume_service.candidate_resume_files
+       (candidate_id, company_id, resume_file_path, resume_original_filename, resume_file_uploaded_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)
+       ON CONFLICT (candidate_id) DO UPDATE SET
+         resume_file_path = COALESCE($3, resume_file_path),
+         resume_original_filename = COALESCE($4, resume_original_filename),
+         resume_file_uploaded_at = COALESCE($5, resume_file_uploaded_at),
+         updated_at = CURRENT_TIMESTAMP
+       RETURNING *`,
+      [candidateId, companyId, data.resume_file_path, data.resume_original_filename, data.resume_file_uploaded_at]
+    );
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error('Error upserting candidate resume file:', error);
+    return null;
+  }
+}
+
 export const db = {
   healthCheck,
   closePool,
@@ -267,6 +319,8 @@ export const db = {
   createExtractionJob,
   getExtractionJob,
   updateExtractionJob,
+  getCandidateResumeFile,
+  upsertCandidateResumeFile,
 };
 
 export { pool };

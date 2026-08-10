@@ -21,6 +21,7 @@ export interface AccessTokenPayload {
 
 export interface CandidateTokenPayload {
   candidate_id: number;
+  company_id: number;
   email: string | null;
   phone: string | null;
   name: string;

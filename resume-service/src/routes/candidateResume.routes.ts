@@ -1,10 +1,8 @@
 /**
- * Ported from the monolith's src/api/candidate-resume.routes.ts - byte-identical request/response
- * contracts. The permanent-file endpoints (POST/GET /candidate-resume/file) no longer touch a
- * local db.ts directly - the file pointer (resume_file_path/resume_original_filename/
- * resume_file_uploaded_at) lives on candidate_accounts, monolith-authoritative until cutover, so
- * these call the monolith's new /internal/resume/* API instead (services/monolithClient.ts).
- * File storage itself goes through services/storage (StorageAdapter.ts's header comment).
+ * Item 5: Resume file storage - candidate resume file metadata now owned by resume-service.
+ * File pointer (resume_file_path/resume_original_filename/resume_file_uploaded_at) migrated
+ * from monolith's candidate_accounts table to resume_service's own candidate_resume_files table.
+ * File storage goes through services/storage (StorageAdapter.ts).
  */
 import { Router } from 'express';
 import multer from 'multer';
@@ -12,7 +10,7 @@ import fs from 'fs';
 import { parseResume } from '../services/parser.service.js';
 import { extractTextFromFile } from '../services/textExtraction.js';
 import { storageAdapter } from '../services/storage/LocalDiskStorageAdapter.js';
-import { getCandidateResumeFile, updateCandidateResumeFile, MonolithProxyError } from '../services/monolithClient.js';
+import { db } from '../db.js';
 import { requireCandidateAuth } from '../middleware/auth.middleware.js';
 import { resumeParseLimiter } from '../middleware/rateLimit.middleware.js';
 import { TEMP_UPLOAD_DIR } from '../config/env.js';
@@ -82,42 +80,41 @@ router.post('/candidate-resume/file', requireCandidateAuth, resumeParseLimiter, 
     }
 
     const candidateId = req.candidate!.candidate_id;
-    let existing;
-    try {
-      existing = await getCandidateResumeFile(candidateId);
-    } catch (error) {
-      if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
-      if (error instanceof MonolithProxyError && error.status === 404) {
-        return res.status(404).json({ error: 'Profile not found' });
-      }
-      throw error;
-    }
+    const companyId = req.candidate!.company_id;
 
+    // Get existing resume file (if any)
+    const existing = await db.getCandidateResumeFile(candidateId);
+
+    // Store file on disk
     const storedPath = await storageAdapter.store(req.file.path, candidateId, req.file.originalname);
 
-    // Replace, not accumulate - a candidate has exactly one resume file on record at a time.
-    if (existing.resume_file_path) {
+    // Delete old file if one exists
+    if (existing?.resume_file_path) {
       await storageAdapter.delete(existing.resume_file_path);
     }
 
-    const updated = await updateCandidateResumeFile(candidateId, {
+    // Update resume file metadata in local database (Item 5: no longer calls monolith)
+    const updated = await db.upsertCandidateResumeFile(candidateId, companyId, {
       resume_file_path: storedPath,
       resume_original_filename: req.file.originalname,
       resume_file_uploaded_at: new Date().toISOString(),
     });
 
+    if (!updated) {
+      throw new Error('Failed to save resume file metadata');
+    }
+
     res.json({
       success: true,
       resume_original_filename: updated.resume_original_filename,
-      resume_file_uploaded_at: (updated as any).resume_file_uploaded_at,
+      resume_file_uploaded_at: updated.resume_file_uploaded_at,
     });
   } catch (error: any) {
     if (req.file && fs.existsSync(req.file.path)) {
       fs.unlinkSync(req.file.path);
     }
     logger.error({ err: error.message }, 'Error in POST /candidate-resume/file');
-    const status = error instanceof MonolithProxyError ? 502 : 500;
-    res.status(status).json({ error: error.message || 'Failed to upload resume' });
+    res.status(500).json({ error: error.message || 'Failed to upload resume' });
   }
 });
 
@@ -126,15 +123,16 @@ router.post('/candidate-resume/file', requireCandidateAuth, resumeParseLimiter, 
 router.get('/candidate-resume/file', requireCandidateAuth, async (req, res) => {
   try {
     const candidateId = req.candidate!.candidate_id;
-    const candidate = await getCandidateResumeFile(candidateId);
-    if (!candidate.resume_file_path || !storageAdapter.exists(candidate.resume_file_path)) {
+    const resumeFile = await db.getCandidateResumeFile(candidateId);
+
+    if (!resumeFile || !resumeFile.resume_file_path || !storageAdapter.exists(resumeFile.resume_file_path)) {
       return res.status(404).json({ error: 'No resume file on record' });
     }
-    res.download(storageAdapter.resolveForDownload(candidate.resume_file_path), candidate.resume_original_filename || 'resume');
+
+    res.download(storageAdapter.resolveForDownload(resumeFile.resume_file_path), resumeFile.resume_original_filename || 'resume');
   } catch (error: any) {
     logger.error({ err: error.message }, 'Error in GET /candidate-resume/file');
-    const status = error instanceof MonolithProxyError ? 502 : 500;
-    res.status(status).json({ error: 'Failed to retrieve resume' });
+    res.status(500).json({ error: 'Failed to retrieve resume' });
   }
 });
 

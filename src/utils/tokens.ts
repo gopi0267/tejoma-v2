@@ -89,6 +89,7 @@ export const CANDIDATE_REFRESH_TOKEN_COOKIE = 'candidate_refresh_token';
 
 export interface CandidateTokenPayload {
   candidate_id: number;
+  company_id: number;
   email: string | null;
   phone: string | null;
   name: string;
