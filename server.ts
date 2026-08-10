@@ -20,6 +20,7 @@ import candidateCoreInternalRoutes from './src/api/candidate-core-internal.route
 import jobInternalRoutes from './src/api/job-internal.routes.js';
 import candidateSearchInternalRoutes from './src/api/candidate-search-internal.routes.js';
 import matchingDecisionInternalRoutes from './src/api/matching-decision-internal.routes.js';
+import ragInternalRoutes from './src/api/rag-internal.routes.js';
 import { logger } from './src/utils/logger.js';
 import { globalLimiter, authLimiter } from './src/middleware/rateLimit.middleware.js';
 import { errorHandler } from './src/middleware/error.middleware.js';
@@ -141,6 +142,10 @@ app.use('/internal/candidate-search', candidateSearchInternalRoutes);
 // Step 6) internal API - same network-boundary trust model as above. See
 // src/api/matching-decision-internal.routes.ts's header comment.
 app.use('/internal/matching-decision', matchingDecisionInternalRoutes);
+// RAG indexing service (Phase D Item 8) internal API - coordinates knowledge base indexing for chat RAG.
+// Services call these endpoints to index candidates/jobs. When RAG_INDEXING_CUTOVER_ENABLED=true,
+// services will handle indexing locally instead. Same network-boundary trust model.
+app.use('/internal/rag', ragInternalRoutes);
 
 // ============================================================================
 // ALL API ROUTES BEFORE VITE MIDDLEWARE
