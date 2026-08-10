@@ -1,0 +1,156 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-tejoma
+  namespace: tejoma
+data:
+  tejoma-overview.json: |
+    {
+      "dashboard": {
+        "title": "Tejoma Microservices Overview",
+        "description": "Real-time monitoring of Tejoma microservices stack",
+        "tags": ["tejoma", "microservices"],
+        "timezone": "UTC",
+        "refresh": "30s",
+        "time": {"from": "now-6h", "to": "now"},
+        "panels": [
+          {
+            "title": "Service Health Status",
+            "targets": [
+              {
+                "expr": "up{job='tejoma-services'}",
+                "legendFormat": "{{ kubernetes_pod_name }}"
+              }
+            ],
+            "type": "graph",
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+          },
+          {
+            "title": "Request Rate (req/s)",
+            "targets": [
+              {
+                "expr": "sum(rate(http_requests_total[5m])) by (kubernetes_pod_name)",
+                "legendFormat": "{{ kubernetes_pod_name }}"
+              }
+            ],
+            "type": "graph",
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+          },
+          {
+            "title": "Error Rate (%)",
+            "targets": [
+              {
+                "expr": "(sum(rate(http_requests_total{status=~'5..'}[5m])) by (kubernetes_pod_name) / sum(rate(http_requests_total[5m])) by (kubernetes_pod_name)) * 100",
+                "legendFormat": "{{ kubernetes_pod_name }}"
+              }
+            ],
+            "type": "graph",
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}
+          },
+          {
+            "title": "P99 Latency (ms)",
+            "targets": [
+              {
+                "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, kubernetes_pod_name)) * 1000",
+                "legendFormat": "{{ kubernetes_pod_name }}"
+              }
+            ],
+            "type": "graph",
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8}
+          },
+          {
+            "title": "Memory Usage (MB)",
+            "targets": [
+              {
+                "expr": "container_memory_usage_bytes{pod_name=~'tejoma-.*'} / 1024 / 1024",
+                "legendFormat": "{{ pod_name }}"
+              }
+            ],
+            "type": "graph",
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16}
+          },
+          {
+            "title": "CPU Usage (%)",
+            "targets": [
+              {
+                "expr": "sum(rate(container_cpu_usage_seconds_total{pod_name=~'tejoma-.*'}[5m])) by (pod_name) * 100",
+                "legendFormat": "{{ pod_name }}"
+              }
+            ],
+            "type": "graph",
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16}
+          }
+        ]
+      }
+    }
+
+  tejoma-cutover-status.json: |
+    {
+      "dashboard": {
+        "title": "Tejoma Cutover Status",
+        "description": "Monitor cutover flag status and cutover progress",
+        "tags": ["tejoma", "cutover"],
+        "timezone": "UTC",
+        "refresh": "10s",
+        "panels": [
+          {
+            "title": "Career Trajectories Cutover",
+            "targets": [
+              {
+                "expr": "cutover_flag{flag='CAREER_TRAJECTORIES_CUTOVER_ENABLED'}"
+              }
+            ],
+            "type": "stat",
+            "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0}
+          },
+          {
+            "title": "Reasoning Conclusions Cutover",
+            "targets": [
+              {
+                "expr": "cutover_flag{flag='REASONING_CONCLUSIONS_CUTOVER_ENABLED'}"
+              }
+            ],
+            "type": "stat",
+            "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0}
+          },
+          {
+            "title": "RAG Indexing Cutover",
+            "targets": [
+              {
+                "expr": "cutover_flag{flag='RAG_INDEXING_CUTOVER_ENABLED'}"
+              }
+            ],
+            "type": "stat",
+            "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0}
+          },
+          {
+            "title": "Service to Monolith Call Ratio",
+            "targets": [
+              {
+                "expr": "sum(rate(monolith_calls_total[5m])) by (service) / sum(rate(service_calls_total[5m])) by (service)",
+                "legendFormat": "{{ service }}"
+              }
+            ],
+            "type": "graph",
+            "gridPos": {"h": 8, "w": 24, "x": 0, "y": 4}
+          }
+        ]
+      }
+    }
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasource-prometheus
+  namespace: tejoma
+data:
+  prometheus-datasource.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        access: proxy
+        url: http://prometheus.tejoma.svc.cluster.local:9090
+        isDefault: true
+        editable: true
