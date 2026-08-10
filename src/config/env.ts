@@ -71,9 +71,11 @@ export const UPLOAD_SERVICE_URL = process.env.UPLOAD_SERVICE_URL || 'http://loca
 export const RESUME_SERVICE_URL = process.env.RESUME_SERVICE_URL || 'http://localhost:4031';
 export const NOTIFICATIONS_SERVICE_URL = process.env.NOTIFICATIONS_SERVICE_URL || 'http://localhost:4032';
 export const MATCHING_EVALUATION_SERVICE_URL = process.env.MATCHING_EVALUATION_SERVICE_URL || 'http://localhost:4023';
+export const MATCHING_REASONING_SERVICE_URL = process.env.MATCHING_REASONING_SERVICE_URL || 'http://localhost:4024';
 
 // ============================================================
 // Phase D Cutover Flags - Full Monolith-to-Microservices Migration
 // ============================================================
 
 export const REASONING_CONCLUSIONS_CUTOVER_ENABLED = process.env.REASONING_CONCLUSIONS_CUTOVER_ENABLED === 'true';
+export const CAREER_TRAJECTORIES_CUTOVER_ENABLED = process.env.CAREER_TRAJECTORIES_CUTOVER_ENABLED === 'true';

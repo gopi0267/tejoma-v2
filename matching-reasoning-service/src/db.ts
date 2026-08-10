@@ -243,6 +243,70 @@ export async function getReasoningConclusions(subjectType: ConclusionSubjectType
   }
 }
 
+// ==================== career_trajectories (Phase D Item 3, owned write path) ====================
+
+export async function getCareerTrajectory(candidateId: number): Promise<any> {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM career_trajectories WHERE candidate_id = $1',
+      [candidateId]
+    );
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error('Error fetching career trajectory:', error);
+    return null;
+  }
+}
+
+export async function replaceCareerTrajectory(candidateId: number, trajectory: any): Promise<any> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Delete existing trajectory for this candidate
+    await client.query('DELETE FROM career_trajectories WHERE candidate_id = $1', [candidateId]);
+
+    // Insert new trajectory
+    const result = await client.query(
+      `INSERT INTO career_trajectories (
+         candidate_id, company_id, job_sequence, total_career_months, role_count,
+         progression_type, seniority_level, seniority_trend, transitions,
+         avg_tenure_months, median_tenure_months, tenure_pattern, gaps,
+         domain_concentration, domains, trajectory_embedding, predicted_next_roles
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+       RETURNING *`,
+      [
+        candidateId,
+        trajectory.company_id,
+        JSON.stringify(trajectory.job_sequence),
+        trajectory.total_career_months,
+        trajectory.role_count,
+        trajectory.progression_type,
+        trajectory.seniority_level,
+        trajectory.seniority_trend,
+        trajectory.transitions ? JSON.stringify(trajectory.transitions) : null,
+        trajectory.avg_tenure_months,
+        trajectory.median_tenure_months,
+        trajectory.tenure_pattern,
+        trajectory.gaps ? JSON.stringify(trajectory.gaps) : null,
+        trajectory.domain_concentration,
+        trajectory.domains ? JSON.stringify(trajectory.domains) : null,
+        trajectory.trajectory_embedding,
+        trajectory.predicted_next_roles ? JSON.stringify(trajectory.predicted_next_roles) : null,
+      ]
+    );
+
+    await client.query('COMMIT');
+    return result.rows[0];
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Error replacing career trajectory:', error);
+    return null;
+  } finally {
+    client.release();
+  }
+}
+
 export const db = {
   healthCheck,
   upsertSkillNode,
@@ -255,6 +319,8 @@ export const db = {
   getSkillEdgesTo,
   replaceReasoningConclusions,
   getReasoningConclusions,
+  getCareerTrajectory,
+  replaceCareerTrajectory,
 };
 
 export { pool };

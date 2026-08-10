@@ -11,8 +11,8 @@ import { User, Company, Candidate, Job, Swipe, MatchScore, ModelVersion, DailySt
 // Tier 0 migration (Batch 13b) - see src/dualWrite.ts's header comment for the full contract.
 // Disabled by default (DUAL_WRITE_ENABLED); every call below is a no-op until an operator opts in.
 import * as dualWrite from './dualWrite.js';
-// Phase D Item 4: Reasoning conclusions cutover flag
-import { REASONING_CONCLUSIONS_CUTOVER_ENABLED, MATCHING_EVALUATION_SERVICE_URL } from './config/env.js';
+// Phase D Item 3 & 4: Cutover flags for service ownership
+import { REASONING_CONCLUSIONS_CUTOVER_ENABLED, MATCHING_EVALUATION_SERVICE_URL, CAREER_TRAJECTORIES_CUTOVER_ENABLED, MATCHING_REASONING_SERVICE_URL } from './config/env.js';
 
 config({ path: '.env.local' });
 
@@ -3929,6 +3929,7 @@ export async function updateRoleProfileEmbedding(id: number, embedding: number[]
 // One row per candidate (UNIQUE candidate_id) - computed by src/matching/careerIntelligence/
 // computeCareerTrajectory.ts from candidates.work_history. Upsert-on-conflict so a re-parse
 // (updated work_history) simply recomputes and overwrites, never accumulates stale rows.
+// Phase D Item 3: If cutover enabled, write to matching-reasoning-service instead of locally
 export async function upsertCareerTrajectory(input: {
   candidate_id: number;
   company_id: number;
@@ -3948,6 +3949,48 @@ export async function upsertCareerTrajectory(input: {
   trajectory_embedding: number[];
   predicted_next_roles: PredictedRole[];
 }): Promise<CareerTrajectory | null> {
+  // Phase D Item 3: If cutover enabled, write to matching-reasoning-service instead of locally
+  if (CAREER_TRAJECTORIES_CUTOVER_ENABLED) {
+    try {
+      const res = await fetch(`${MATCHING_REASONING_SERVICE_URL}/reasoning/career-trajectory/replace`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          candidateId: input.candidate_id,
+          trajectory: {
+            company_id: input.company_id,
+            job_sequence: input.job_sequence,
+            total_career_months: input.total_career_months,
+            role_count: input.role_count,
+            progression_type: input.progression_type,
+            seniority_level: input.seniority_level,
+            seniority_trend: input.seniority_trend,
+            transitions: input.transitions,
+            avg_tenure_months: input.avg_tenure_months,
+            median_tenure_months: input.median_tenure_months,
+            tenure_pattern: input.tenure_pattern,
+            gaps: input.gaps,
+            domain_concentration: input.domain_concentration,
+            domains: input.domains,
+            trajectory_embedding: input.trajectory_embedding,
+            predicted_next_roles: input.predicted_next_roles,
+          },
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        console.error('Error calling matching-reasoning-service:', res.status, body);
+        return null;
+      }
+      const data = await res.json();
+      return data.trajectory || null;
+    } catch (error) {
+      console.error('Error calling matching-reasoning-service for career trajectory:', error);
+      return null;
+    }
+  }
+
+  // Fallback: write locally (backward compatibility when cutover is disabled)
   try {
     const result = await pool.query(
       `INSERT INTO career_trajectories (
