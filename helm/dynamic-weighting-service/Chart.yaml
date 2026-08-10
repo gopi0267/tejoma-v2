@@ -1,0 +1,6 @@
+apiVersion: v2
+name: dynamic-weighting-service
+description: Tejoma Dynamic Weighting / Explainable Matching Service - Tier 0 (Batch 33). Ports the confirmed-dormant Dynamic Weighting scoring path, its explanation layer, and Hybrid Retrieval - the seventh extracted slice of the Matching domain. No owned table; no live traffic today.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

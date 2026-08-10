@@ -11,7 +11,19 @@ import cookieParser from 'cookie-parser';
 import pinoHttp from 'pino-http';
 import { createServer as createViteServer } from 'vite';
 import { registerApiRoutes } from './src/api/index.js';
-import { clients } from './src/realtime.js';
+import candidateInternalRoutes from './src/api/candidate-internal.routes.js';
+import chatInternalRoutes from './src/api/chat-internal.routes.js';
+import resumeInternalRoutes from './src/api/resume-internal.routes.js';
+import recruitingInternalRoutes from './src/api/recruiting-internal.routes.js';
+import analyticsInternalRoutes from './src/api/analytics-internal.routes.js';
+import matchingEvaluationInternalRoutes from './src/api/matching-evaluation-internal.routes.js';
+import skillDiscoveryInternalRoutes from './src/api/skill-discovery-internal.routes.js';
+import matchingScoringInternalRoutes from './src/api/matching-scoring-internal.routes.js';
+import candidateCoreInternalRoutes from './src/api/candidate-core-internal.routes.js';
+import jobInternalRoutes from './src/api/job-internal.routes.js';
+import candidateSearchInternalRoutes from './src/api/candidate-search-internal.routes.js';
+import matchingDecisionInternalRoutes from './src/api/matching-decision-internal.routes.js';
+import { clients, initializeRealtimeSubscription, closeRealtimeSubscription } from './src/realtime.js';
 import { logger } from './src/utils/logger.js';
 import { globalLimiter, authLimiter } from './src/middleware/rateLimit.middleware.js';
 import { errorHandler } from './src/middleware/error.middleware.js';
@@ -106,6 +118,49 @@ app.get('/api/realtime/stream', (req, res) => {
   });
 });
 
+// Candidate Service (Batch 16) internal API - network-boundary trusted (no JWT), matching every
+// other Tier 0 service's /internal/* convention. API Gateway's proxy.ts already 404s /internal/*
+// unconditionally; Candidate Service calls this directly via MONOLITH_INTERNAL_URL, never
+// through the Gateway. See src/api/candidate-internal.routes.ts's header comment.
+app.use('/internal/candidate', candidateInternalRoutes);
+// Chat Service (Batch 17) internal API - same network-boundary trust model as above. See
+// src/api/chat-internal.routes.ts's header comment.
+app.use('/internal/chat', chatInternalRoutes);
+// Resume Service (Batch 18) internal API - same network-boundary trust model as above. See
+// src/api/resume-internal.routes.ts's header comment.
+app.use('/internal/resume', resumeInternalRoutes);
+// Recruiting Service (Batch 19) internal API - same network-boundary trust model as above. See
+// src/api/recruiting-internal.routes.ts's header comment.
+app.use('/internal/recruiting', recruitingInternalRoutes);
+// Analytics Service (Batch 22) internal API - same network-boundary trust model as above. See
+// src/api/analytics-internal.routes.ts's header comment.
+app.use('/internal/analytics', analyticsInternalRoutes);
+// Matching Evaluation Service (Batch 24) internal API - same network-boundary trust model as
+// above. See src/api/matching-evaluation-internal.routes.ts's header comment.
+app.use('/internal/matching-evaluation', matchingEvaluationInternalRoutes);
+// Matching Skill Discovery Service (Batch 27) internal API - same network-boundary trust model as
+// above. See src/api/skill-discovery-internal.routes.ts's header comment.
+app.use('/internal/skill-discovery', skillDiscoveryInternalRoutes);
+// Matching Scoring Service's ML admin surface (remaining-monolith migration, Step 1) internal API
+// - same network-boundary trust model as above. See src/api/matching-scoring-internal.routes.ts's
+// header comment.
+app.use('/internal/matching-scoring', matchingScoringInternalRoutes);
+// Candidate Core Service's write proxy (remaining-monolith migration, Step 3a) internal API - same
+// network-boundary trust model as above. See src/api/candidate-core-internal.routes.ts's header
+// comment.
+app.use('/internal/candidate-core', candidateCoreInternalRoutes);
+// Job Service's write/list proxy (remaining-monolith migration, Step 4) internal API - same
+// network-boundary trust model as above. See src/api/job-internal.routes.ts's header comment.
+app.use('/internal/job', jobInternalRoutes);
+// Candidate Service's candidate-search shortlist proxy (remaining-monolith migration, Step 5)
+// internal API - same network-boundary trust model as above. See
+// src/api/candidate-search-internal.routes.ts's header comment.
+app.use('/internal/candidate-search', candidateSearchInternalRoutes);
+// Matching Decision Service's swipe/recruiter-review write proxy (remaining-monolith migration,
+// Step 6) internal API - same network-boundary trust model as above. See
+// src/api/matching-decision-internal.routes.ts's header comment.
+app.use('/internal/matching-decision', matchingDecisionInternalRoutes);
+
 // ============================================================================
 // ALL API ROUTES BEFORE VITE MIDDLEWARE
 // ============================================================================
@@ -142,6 +197,10 @@ async function startServer() {
 
   const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`✅ Server running on http://localhost:${PORT}`);
+    // Initialize Redis subscription for real-time events from services.
+    initializeRealtimeSubscription().catch(err => {
+      logger.warn({ err }, 'Failed to initialize realtime subscription');
+    });
   });
 
   // Lets in-flight requests finish and closes the DB pool cleanly on container stop/restart,
@@ -152,6 +211,7 @@ async function startServer() {
     shuttingDown = true;
     console.log(`${signal} received, shutting down gracefully...`);
     server.close(async () => {
+      await closeRealtimeSubscription();
       await closeRetrainQueue();
       await db.closeConnection();
       console.log('Shutdown complete.');

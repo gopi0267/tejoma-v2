@@ -1,0 +1,13 @@
+jd-parser-service ({{ .Chart.AppVersion }}) deployed as {{ include "jd-parser-service.fullname" . }}.
+
+Check rollout status:
+  kubectl rollout status deployment/{{ include "jd-parser-service.fullname" . }} -n {{ .Release.Namespace }}
+
+Check health:
+  kubectl port-forward svc/{{ include "jd-parser-service.fullname" . }} 4004:{{ .Values.service.port }} -n {{ .Release.Namespace }}
+  curl http://localhost:4004/health
+
+Reminder: this service has no database - there is nothing to migrate. Confirm JWT_SECRET (Secret)
+matches the monolith's own exactly, or every request will 401 - see values.yaml's comment and
+src/config/env.ts's header comment for why this service intentionally does NOT use the
+RS256/JWKS scheme platform-governance-service uses.

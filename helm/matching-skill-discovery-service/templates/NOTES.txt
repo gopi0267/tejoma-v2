@@ -1,0 +1,19 @@
+matching-skill-discovery-service ({{ .Chart.AppVersion }}) deployed as {{ include "matching-skill-discovery-service.fullname" . }}.
+
+Check rollout status:
+  kubectl rollout status deployment/{{ include "matching-skill-discovery-service.fullname" . }} -n {{ .Release.Namespace }}
+
+Check health:
+  kubectl port-forward svc/{{ include "matching-skill-discovery-service.fullname" . }} 4013:{{ .Values.service.port }} -n {{ .Release.Namespace }}
+  curl http://localhost:4013/health
+
+Reminder: this chart does NOT run database migrations. Before the first deploy to a new
+environment, run matching-skill-discovery-service/scripts/migrate.ts (and validate-schema.ts)
+against the target database out-of-band, then
+scripts/backfill-matching-skill-discovery-service.ts from the monolith - see
+matching-skill-discovery-service/README.md and MIGRATION_RUNBOOK.md.
+
+Confirm JWT_SECRET matches the monolith's own exactly (401s otherwise). This service is NOT yet
+gateway-routed - see README.md's "Why this isn't gateway-routed yet" before assuming
+/api/skills/discovery/* traffic reaches it. Set MONOLITH_INTERNAL_URL so promotion (the one write
+this service doesn't own) can reach the monolith's /internal/skill-discovery/promote endpoint.

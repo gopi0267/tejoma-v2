@@ -2,16 +2,42 @@ import { Router } from 'express';
 import multer from 'multer';
 import fs from 'fs';
 import path from 'path';
+import * as pdf from 'pdf-parse';
+import WordExtractor from 'word-extractor';
 import { parseResume } from '../../parser.service.js';
-import { extractTextFromFile } from './upload.routes.js';
 import { requireCandidateAuth } from '../middleware/auth.middleware.js';
 import { resumeParseLimiter } from '../middleware/rateLimit.middleware.js';
 import { db } from '../db.js';
 
 const router = Router();
 
+async function extractTextFromFile(filePath: string, originalName: string): Promise<string> {
+  const extension = path.extname(originalName).toLowerCase();
+  const fileBuffer = fs.readFileSync(filePath);
+
+  if (extension === '.pdf') {
+    const pdfLib = (pdf.default || pdf) as any;
+    if (pdfLib.PDFParse) {
+      const parser = new pdfLib.PDFParse({ data: fileBuffer });
+      const pdfData = await parser.getText();
+      return pdfData.text || '';
+    } else {
+      const pdfData = await pdfLib(fileBuffer);
+      return pdfData.text || '';
+    }
+  } else if (extension === '.docx' || extension === '.doc') {
+    const extractor = new WordExtractor();
+    const doc = await extractor.extract(fileBuffer);
+    return doc.getBody();
+  } else if (extension === '.txt') {
+    return fileBuffer.toString('utf-8');
+  } else {
+    throw new Error(`Unsupported file type: ${extension}`);
+  }
+}
+
 // Reuses the exact same parsing pipeline the recruiter-facing /api/parse-resume route uses
-// (extractTextFromFile + parseResume, both imported, not duplicated) - only the route, auth
+// (extractTextFromFile + parseResume, both here, not duplicated) - only the route, auth
 // gate, and rate limit are new. The recruiter route can't be reused directly: it applies a
 // blanket requireAuth (staff access_token cookie), which a candidate session never holds.
 const ALLOWED_RESUME_MIME_TYPES = new Set([

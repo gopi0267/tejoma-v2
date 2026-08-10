@@ -1,0 +1,77 @@
+# Default values for matching-reasoning-service. See helm/identity-service/values.yaml's header
+# comment for the two supported ways to supply secrets - identical pattern, applied here.
+#
+# No JWT_SECRET: this service has no user-facing HTTP surface (config/env.ts's header comment) -
+# its only caller is the monolith itself, trusted by network boundary.
+
+replicaCount: 2
+
+image:
+  repository: ""  # e.g. <account-id>.dkr.ecr.ap-south-1.amazonaws.com/tejoma-matching-reasoning-service
+  tag: ""
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 4012
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+
+probes:
+  liveness:
+    path: /live
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+  readiness:
+    path: /ready
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+terminationGracePeriodSeconds: 30
+preStopSleepSeconds: 5
+
+config:
+  NODE_ENV: production
+  LOG_LEVEL: info
+  DB_HOST: ""
+  DB_PORT: "5432"
+  DB_NAME: tejoma_matching_reasoning
+  DB_USER: matching_reasoning_service
+  # Optional - the Python BERT embedding service, called directly (not through the monolith).
+  # Gracefully degrades when unreachable (semanticReasoning.ts's embedding-neighbor tier only).
+  MATCHING_ML_SERVICE_URL: ""
+
+existingSecret: ""
+secrets:
+  DB_PASSWORD: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "4012"
+  prometheus.io/path: /metrics
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "jd-parser-service.fullname" . }}-config
+  labels:
+    {{- include "jd-parser-service.labels" . | nindent 4 }}
+data:
+  PORT: "4004"
+  {{- range $key, $value := .Values.config }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}

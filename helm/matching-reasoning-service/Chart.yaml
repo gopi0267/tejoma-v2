@@ -1,0 +1,6 @@
+apiVersion: v2
+name: matching-reasoning-service
+description: Tejoma Matching Reasoning Service - Tier 0 (Batch 26). Owns the AI Reasoning Layer (reasoning_conclusions) and a dual-written mirror of skill_nodes/skill_edges - the second extracted slice of the Matching domain.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

@@ -1,0 +1,18 @@
+matching-scoring-service ({{ .Chart.AppVersion }}) deployed as {{ include "matching-scoring-service.fullname" . }}.
+
+Check rollout status:
+  kubectl rollout status deployment/{{ include "matching-scoring-service.fullname" . }} -n {{ .Release.Namespace }}
+
+Check health:
+  kubectl port-forward svc/{{ include "matching-scoring-service.fullname" . }} 4021:{{ .Values.service.port }} -n {{ .Release.Namespace }}
+  curl http://localhost:4021/health
+
+Reminder: this chart does NOT run database migrations. Before the first deploy to a new
+environment, run matching-scoring-service/scripts/migrate.ts (and validate-schema.ts) against
+the target database out-of-band, then scripts/backfill-matching-scoring-service.ts from the
+monolith - see matching-scoring-service/README.md and MIGRATION_RUNBOOK.md.
+
+This service has no gateway route and no user-facing HTTP surface - its only caller is the
+monolith's own src/reasoningServiceShadow.ts, gated behind SHADOW_REASONING_ENABLED (default off).
+Set MATCHING_REASONING_SERVICE_URL on the monolith's own deployment to point at this service
+before enabling that flag.

@@ -1,0 +1,12 @@
+identity-service ({{ .Chart.AppVersion }}) deployed as {{ include "identity-service.fullname" . }}.
+
+Check rollout status:
+  kubectl rollout status deployment/{{ include "identity-service.fullname" . }} -n {{ .Release.Namespace }}
+
+Check health:
+  kubectl port-forward svc/{{ include "identity-service.fullname" . }} 4001:{{ .Values.service.port }} -n {{ .Release.Namespace }}
+  curl http://localhost:4001/health
+
+Reminder: this chart does NOT run database migrations. Before the first deploy to a new
+environment, run identity-service/scripts/migrate.ts (and validate-schema.ts) against the target
+database out-of-band - see identity-service/README.md.

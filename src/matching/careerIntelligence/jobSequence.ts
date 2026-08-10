@@ -80,7 +80,10 @@ export function computeDurationMonths(
 // normalized version of the raw title itself, so domain-concentration analysis still has
 // something to group by rather than silently excluding the role - kept honestly distinct from a
 // real match (roleProfileId stays null in that case).
-async function resolveJobRole(title: string | null | undefined): Promise<{ roleProfileId: number | null; domain: string | null }> {
+// Exported (Phase 12, careerWeighting.ts) - resolving a JOB POSTING's own title into the same
+// domain bucket space a candidate's work history already uses is the same operation, reused
+// rather than reimplemented.
+export async function resolveJobRole(title: string | null | undefined): Promise<{ roleProfileId: number | null; domain: string | null }> {
   if (!title || !title.trim()) return { roleProfileId: null, domain: null };
   const role = await findLexicalRoleMatch(title);
   if (role) return { roleProfileId: role.id, domain: role.role_key };

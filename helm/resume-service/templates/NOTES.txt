@@ -1,0 +1,15 @@
+resume-service ({{ .Chart.AppVersion }}) deployed as {{ include "resume-service.fullname" . }}.
+
+Check rollout status:
+  kubectl rollout status deployment/{{ include "resume-service.fullname" . }} -n {{ .Release.Namespace }}
+
+Check health:
+  kubectl port-forward svc/{{ include "resume-service.fullname" . }} 4007:{{ .Values.service.port }} -n {{ .Release.Namespace }}
+  curl http://localhost:4007/health
+
+IMPORTANT: this service stores permanent resume files on local disk. Do NOT scale replicas above
+1 (there is deliberately no HPA in this chart) until a real object-storage adapter backs
+src/services/storage/StorageAdapter.ts - see that file's header comment and resume-service/README.md.
+
+Confirm JWT_SECRET matches the monolith's own exactly, and that GEMINI_API_KEY is a real, working
+key - parsing is this service's entire purpose, there is no fallback path for a missing key.

@@ -4,7 +4,7 @@
  *
  * Detailed Rubric Scoring Report - a separate, on-demand, LLM-judged report a recruiter can
  * generate for one candidate+job pair from the Recruiter Review detail panel. This is entirely
- * independent of the platform's real matching engine (src/services.ts's calculateMatchScore,
+ * independent of the platform's real matching engine (src/matching/services.ts's calculateMatchScore,
  * which drives the swipe queue's match % and "AI Match Breakdown") - nothing here feeds back
  * into that pipeline, and nothing there is modified by this file.
  *

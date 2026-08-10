@@ -1,0 +1,20 @@
+QA Automation Intern
+
+We are looking for a QA Automation Intern to join our Quality Engineering team for a 6-month
+internship, with a possibility of full-time conversion.
+
+Required Skills:
+0-1 Years of experience (freshers welcome).
+Basic knowledge of Selenium, TestNG, and Java.
+Understanding of Agile and Scrum methodologies.
+BCA, BE, or B.Tech (final year or recent graduate).
+
+Responsibilities:
+Write and maintain automated test scripts.
+Log and track bugs using JIRA.
+Participate in daily standups and sprint planning.
+
+Location: Chennai, Onsite
+Employment Type: Internship
+Notice Period: Immediate
+Openings: 4

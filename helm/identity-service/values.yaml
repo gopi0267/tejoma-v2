@@ -1,0 +1,103 @@
+# Default values for identity-service. Override per-environment with
+# `helm upgrade --install -f values-production.yaml` (not committed - see the secrets note below)
+# or `--set`. Nothing in this file, on its own, is sufficient to deploy to production - the
+# secret.* values below are intentionally empty placeholders.
+
+replicaCount: 2
+
+image:
+  repository: ""  # e.g. <account-id>.dkr.ecr.ap-south-1.amazonaws.com/tejoma-identity-service
+  tag: ""         # set explicitly per deploy (git SHA or semver) - never "latest" in production
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 4001
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+
+probes:
+  liveness:
+    path: /live
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+  readiness:
+    path: /ready
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+# Phase 5(infrastructure) section 3's preStop-hook expectation - stop accepting new connections,
+# let in-flight requests finish, before the pod is actually removed from the Service endpoints
+# (the ordering Kubernetes needs an explicit sleep for, since endpoint removal and SIGTERM delivery
+# are not synchronized).
+terminationGracePeriodSeconds: 30
+preStopSleepSeconds: 5
+
+# Non-secret configuration - safe to commit. DB_PASSWORD and every credential below live in
+# secret.* instead, never here.
+config:
+  NODE_ENV: production
+  LOG_LEVEL: info
+  DB_HOST: ""       # e.g. the RDS endpoint for this service's database - see MIGRATION_RUNBOOK.md
+  DB_PORT: "5432"
+  DB_NAME: tejoma_identity
+  DB_USER: identity_service
+  FRONTEND_URL: ""  # the real frontend origin(s), comma-separated if more than one
+  TENANT_DIRECTORY_SERVICE_URL: "http://tenant-directory-service.tejoma.svc.cluster.local"
+  PLATFORM_GOVERNANCE_SERVICE_URL: "http://platform-governance-service.tejoma.svc.cluster.local"
+  MARKETPLACE_SERVICE_URL: ""  # unset until Marketplace Service exists (Tier 1) - graceful-null until then
+  STAFF_GOOGLE_REDIRECT_URI: ""
+  GOOGLE_REDIRECT_URI: ""
+
+# SECRETS - every value below MUST be supplied per-environment, never committed here as real
+# values. Two supported ways, from least to most production-appropriate:
+#   1. `--set-string secrets.DB_PASSWORD=... --set-string secrets.IDENTITY_JWT_PRIVATE_KEY=...`
+#      at `helm upgrade --install` time (fine for a first deploy or a break-glass situation).
+#   2. Pre-create the Kubernetes Secret out-of-band (e.g. via the External Secrets Operator
+#      pulling from AWS Secrets Manager, per Phase 5(infrastructure) sections 7/15's already-
+#      decided approach - see identity-service/src/config/keys.ts's own header comment) and set
+#      `existingSecret: <name>` below instead of populating `secrets.*` at all - this chart's
+#      secret.yaml template only renders when `existingSecret` is empty.
+existingSecret: ""
+secrets:
+  DB_PASSWORD: ""
+  IDENTITY_JWT_PRIVATE_KEY: ""
+  IDENTITY_JWT_PUBLIC_KEY: ""
+  GOOGLE_CLIENT_ID: ""
+  GOOGLE_CLIENT_SECRET: ""
+  GMAIL_USER: ""
+  GMAIL_APP_PASSWORD: ""
+  TWILIO_ACCOUNT_SID: ""
+  TWILIO_AUTH_TOKEN: ""
+  TWILIO_FROM_NUMBER: ""
+
+serviceAccount:
+  create: true
+  annotations: {}  # e.g. eks.amazonaws.com/role-arn for IRSA, once External Secrets Operator is wired up
+  name: ""
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "4001"
+  prometheus.io/path: /metrics
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

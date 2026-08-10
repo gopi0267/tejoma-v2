@@ -1,0 +1,13 @@
+# Copy to terraform.tfvars and fill in - terraform.tfvars is gitignored (see ../.gitignore),
+# db_master_password should NOT go here even so - pass it via TF_VAR_db_master_password instead.
+
+aws_region  = "ap-south-1"
+project     = "tejoma"
+environment = "production"
+
+github_repository = "" # e.g. "your-org/tejoma-rec" - required for the CI/CD IAM role to be created at all
+
+# Cost-conscious defaults are already set in variables.tf (single NAT Gateway, single-AZ RDS,
+# db.t3.micro, t3.medium x2 nodes) - override here only if you want to change them, e.g.:
+# single_nat_gateway = false
+# db_multi_az        = true

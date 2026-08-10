@@ -292,15 +292,26 @@ export async function discoverUnknownSkill(rawToken: string, contextText: string
 // Sequential, not parallel, per token - deliberately bounds concurrent LLM/embedding calls per
 // ingestion event so one resume with many unrecognized tokens can't fire dozens of concurrent
 // Gemini/embedding requests at once.
-export async function discoverUnknownSkills(rawSkills: string[], contextText: string, sourceType: 'resume' | 'jd'): Promise<void> {
+//
+// Tier 0 migration (Batch 27) - return type widened from Promise<void> to Promise<DiscoveryOutcome[]>,
+// purely additive: every existing call site (discoverUnknownSkillsInBackground below) already
+// discards the return value via .catch()-only chaining, so this changes nothing about real
+// behavior. Added so src/skillDiscoveryServiceShadow.ts can log this service's own real outcomes
+// alongside matching-skill-discovery-service's independently-computed ones for operator comparison,
+// without a second, duplicate call into this pipeline (which would double-count mention_count on
+// any token this call already touched - a real data-integrity risk, not just redundant work).
+export async function discoverUnknownSkills(rawSkills: string[], contextText: string, sourceType: 'resume' | 'jd'): Promise<DiscoveryOutcome[]> {
   const unresolved = await detectUnresolvedTokens(rawSkills);
+  const outcomes: DiscoveryOutcome[] = [];
   for (const token of unresolved) {
     try {
-      await discoverUnknownSkill(token, contextText, sourceType);
+      const outcome = await discoverUnknownSkill(token, contextText, sourceType);
+      if (outcome) outcomes.push(outcome);
     } catch (err: any) {
       logger.warn({ err: err.message, token }, 'Unknown Skill Discovery pipeline failed for one token');
     }
   }
+  return outcomes;
 }
 
 // Fire-and-forget wrapper for use in request handlers - discovery must never block or fail a

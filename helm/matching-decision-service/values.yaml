@@ -1,0 +1,87 @@
+# Default values for matching-decision-service. See helm/identity-service/values.yaml's header
+# comment for the two supported ways to supply secrets - identical pattern, applied here.
+#
+# JWT_SECRET: this service now has a real, gateway-routed, staff-facing HTTP surface
+# (Remaining-monolith migration, Step 6) - GET /api/matches/queue/:job_id, POST /api/matches/
+# score, GET /api/swipes/history, and GET /api/swipes/stats are real cutovers (own swipes mirror +
+# job-service/candidate-core-service/matching-scoring-service fan-out); POST /api/swipes and every
+# /api/recruiter-review* route proxy to the monolith, which stays the sole writer.
+
+replicaCount: 2
+
+image:
+  repository: ""  # e.g. <account-id>.dkr.ecr.ap-south-1.amazonaws.com/tejoma-matching-decision-service
+  tag: ""
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 4020
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+
+probes:
+  liveness:
+    path: /live
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+  readiness:
+    path: /ready
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+terminationGracePeriodSeconds: 30
+preStopSleepSeconds: 5
+
+config:
+  NODE_ENV: production
+  LOG_LEVEL: info
+  DB_HOST: ""
+  DB_PORT: "5432"
+  DB_NAME: tejoma_matching_decision
+  DB_USER: matching_decision_service
+  FRONTEND_URL: ""
+  # Required for the write proxy (POST /api/swipes, every /api/recruiter-review* route).
+  MONOLITH_INTERNAL_URL: ""
+  # Required for the real-cutover routes' fan-out (job/candidate hydration, tier: 'full' ranking).
+  JOB_SERVICE_URL: ""
+  CANDIDATE_CORE_SERVICE_URL: ""
+  MATCHING_SCORING_SERVICE_URL: ""
+
+existingSecret: ""
+secrets:
+  DB_PASSWORD: ""
+  # Same value as the monolith's own JWT_SECRET - this service verifies the exact staff token the
+  # monolith issues today, not a JWKS-based one. Must match exactly, or every request will 401.
+  JWT_SECRET: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "4020"
+  prometheus.io/path: /metrics
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

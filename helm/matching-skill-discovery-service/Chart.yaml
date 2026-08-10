@@ -1,0 +1,6 @@
+apiVersion: v2
+name: matching-skill-discovery-service
+description: Tejoma Matching Skill Discovery Service - Tier 0 (Batch 27). Owns Unknown Skill Discovery (skill_discovery_proposals) and a dual-written mirror of skill_nodes - the third extracted slice of the Matching domain.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

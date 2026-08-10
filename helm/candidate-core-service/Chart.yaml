@@ -1,0 +1,6 @@
+apiVersion: v2
+name: candidate-core-service
+description: Tejoma Candidate Core Service - Tier 0. Owns a dual-written mirror of the monolith's candidates table (recruiter-facing, resume-parsed profile - distinct from candidate-service's candidate_accounts). As of the remaining-monolith migration Step 3a, GET /api/candidates* is gateway-routed and served from this mirror; writes proxy to the monolith, which stays the sole writer.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

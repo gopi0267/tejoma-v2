@@ -1,0 +1,12 @@
+tenant-directory-service ({{ .Chart.AppVersion }}) deployed as {{ include "tenant-directory-service.fullname" . }}.
+
+Check rollout status:
+  kubectl rollout status deployment/{{ include "tenant-directory-service.fullname" . }} -n {{ .Release.Namespace }}
+
+Check health:
+  kubectl port-forward svc/{{ include "tenant-directory-service.fullname" . }} 4003:{{ .Values.service.port }} -n {{ .Release.Namespace }}
+  curl http://localhost:4003/health
+
+Reminder: this chart does NOT run database migrations. Before the first deploy to a new
+environment, run tenant-directory-service/scripts/migrate.ts (and validate-schema.ts) against the target
+database out-of-band - see tenant-directory-service/README.md.

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: analytics-service
+description: Tejoma Analytics Service - Tier 0 (Batch 22). Owns nothing directly - a pure proxy over the monolith's recruiter/admin dashboard analytics.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

@@ -1,0 +1,19 @@
+api-gateway ({{ .Chart.AppVersion }}) deployed as {{ include "api-gateway.fullname" . }}.
+
+Check rollout status:
+  kubectl rollout status deployment/{{ include "api-gateway.fullname" . }} -n {{ .Release.Namespace }}
+
+Check health:
+  kubectl port-forward svc/{{ include "api-gateway.fullname" . }} 4000:{{ .Values.service.port }} -n {{ .Release.Namespace }}
+  curl http://localhost:4000/health
+
+This service has no database of its own (api-gateway/README.md).
+
+{{- if .Values.ingress.enabled }}
+Ingress is ENABLED for host {{ .Values.ingress.host }} - real traffic can reach this Gateway.
+Confirm MIGRATION_RUNBOOK.md's pre-cutover checklist (§1) has actually passed before this was
+turned on, not after.
+{{- else }}
+Ingress is disabled (the default) - this deployment is not yet reachable from outside the
+cluster. See MIGRATION_RUNBOOK.md §3 before setting ingress.enabled=true.
+{{- end }}

@@ -3,6 +3,11 @@ import { GoogleGenAI } from '@google/genai';
 import { db } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.middleware.js';
 import { retrieveRelevantChunks, reindexAllCandidates, reindexAllJobs } from '../rag.service.js';
+import { ACCESS_TOKEN_COOKIE } from '../utils/tokens.js';
+// Tier 0 migration (Batch 17) - see src/chatShadow.ts's header comment for the full contract
+// (compares retrieved sources only, never the generated reply text). Disabled by default
+// (SHADOW_CHAT_ENABLED); a no-op until an operator opts in.
+import { shadowChat } from '../chatShadow.js';
 
 const router = Router();
 router.use(requireAuth, requireRole('recruiter', 'admin'));
@@ -38,11 +43,24 @@ ${retrievedContext || '(No sufficiently relevant candidates or jobs were found f
 }
 
 router.post('/chat', async (req, res) => {
+  // Batch 17 shadow-validation: registered before any early return, fires exactly once after the
+  // response has actually been sent (res.on('finish')), mirroring every other shadow hook in this
+  // codebase exactly.
+  let shadowStatus: number | null = null;
+  let shadowSources: { source_type: string; source_id: number; relevance: number }[] | null = null;
+  res.on('finish', () => {
+    const accessToken = req.cookies?.[ACCESS_TOKEN_COOKIE];
+    if (shadowStatus !== null && accessToken) {
+      shadowChat(req.body?.message, req.body?.history, shadowStatus, shadowSources || [], accessToken);
+    }
+  });
+
   try {
     const { message, history } = req.body as { message?: string; history?: ChatTurn[] };
     const companyId = req.user!.company_id;
 
     if (!message || typeof message !== 'string' || !message.trim()) {
+      shadowStatus = 400;
       return res.status(400).json({ error: 'Message is required.' });
     }
 
@@ -78,12 +96,13 @@ router.post('/chat', async (req, res) => {
 
     const reply = response.text?.trim() || "I couldn't generate a response - please try rephrasing your question.";
 
-    res.json({
-      reply,
-      sources: chunks.map((c) => ({ source_type: c.source_type, source_id: c.source_id, relevance: c.score })),
-    });
+    const sources = chunks.map((c) => ({ source_type: c.source_type, source_id: c.source_id, relevance: c.score }));
+    shadowStatus = 200;
+    shadowSources = sources;
+    res.json({ reply, sources });
   } catch (error: any) {
     console.error('Chat request failed:', error);
+    shadowStatus = 500;
     res.status(500).json({ error: 'Failed to generate a response. Please try again.' });
   }
 });

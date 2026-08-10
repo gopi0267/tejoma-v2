@@ -1,0 +1,83 @@
+# Default values for matching-skill-discovery-service. See helm/identity-service/values.yaml's
+# header comment for the two supported ways to supply secrets - identical pattern, applied here.
+
+replicaCount: 2
+
+image:
+  repository: ""  # e.g. <account-id>.dkr.ecr.ap-south-1.amazonaws.com/tejoma-matching-skill-discovery-service
+  tag: ""
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 4013
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+
+probes:
+  liveness:
+    path: /live
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+  readiness:
+    path: /ready
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+terminationGracePeriodSeconds: 30
+preStopSleepSeconds: 5
+
+config:
+  NODE_ENV: production
+  LOG_LEVEL: info
+  DB_HOST: ""
+  DB_PORT: "5432"
+  DB_NAME: tejoma_matching_skill_discovery
+  DB_USER: matching_skill_discovery_service
+  FRONTEND_URL: ""
+  # Required - promotion has no safe fallback without it (this service never writes the skill
+  # graph itself). See src/config/env.ts's header comment.
+  MONOLITH_INTERNAL_URL: ""
+  # Optional - the Python BERT embedding service, called directly (not through the monolith).
+  MATCHING_ML_SERVICE_URL: ""
+
+existingSecret: ""
+secrets:
+  DB_PASSWORD: ""
+  # Same value as the monolith's own JWT_SECRET - this service verifies the exact staff token the
+  # monolith issues today, not a JWKS-based one. Must match exactly, or every request will 401.
+  JWT_SECRET: ""
+  # Optional - gracefully degrades to queuing every token for manual review when unset, preserving
+  # the monolith's own original behavior exactly (never required - see config/env.ts).
+  GEMINI_API_KEY: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "4013"
+  prometheus.io/path: /metrics
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

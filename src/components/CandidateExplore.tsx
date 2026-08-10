@@ -211,7 +211,7 @@ export default function CandidateExplore({ onSelectJob }: { onSelectJob: (id: nu
       <div className="w-full max-w-md">
         <div className="mb-6 text-center">
           <h1 className="text-2xl font-bold text-[#1A1A1A] tracking-tight">Explore</h1>
-          <p className="text-[#888888] text-xs mt-1.5">Swipe, drag, or use the buttons below — arrow keys work too.</p>
+          <p className="text-[#888888] text-xs mt-1.5">Swipe right if you wish to apply — arrow keys work too.</p>
         </div>
 
         {error && <div className="bg-[#FFE5E5] border border-[#FFB3B3] p-3 rounded-lg text-[#E74C3C] text-xs font-medium mb-4">{error}</div>}
@@ -347,9 +347,8 @@ export default function CandidateExplore({ onSelectJob }: { onSelectJob: (id: nu
               <button
                 onClick={() => toggleSave(current.id)}
                 aria-label="Save"
-                className={`w-11 h-11 rounded-full shadow-md border flex items-center justify-center hover:scale-105 active:scale-95 transition-all cursor-pointer ${
-                  savedIds.has(current.id) ? 'bg-[#FBF3DC] border-[#E0C070] text-[#B8860B]' : 'bg-white border-[#E5E7EB] text-[#666666] hover:bg-[#F3F2EF]'
-                }`}
+                className={`w-11 h-11 rounded-full shadow-md border flex items-center justify-center hover:scale-105 active:scale-95 transition-all cursor-pointer ${savedIds.has(current.id) ? 'bg-[#FBF3DC] border-[#E0C070] text-[#B8860B]' : 'bg-white border-[#E5E7EB] text-[#666666] hover:bg-[#F3F2EF]'
+                  }`}
               >
                 <Bookmark className="w-4 h-4" fill={savedIds.has(current.id) ? 'currentColor' : 'none'} />
               </button>

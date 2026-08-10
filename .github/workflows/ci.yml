@@ -1,0 +1,203 @@
+name: CI
+
+# Runs on every push/PR - typecheck + real, DB-backed test suite for the monolith and every
+# Tier 0 service, exactly matching the verification discipline used throughout this migration
+# (never mocked, always a real Postgres) - with one deliberate exception: chat-service's tests
+# mock the Gemini SDK (no real API key is available to CI), see chat-service/tests/*.test.ts's own
+# header comments. Safe to run automatically: no AWS credentials, no deployment, nothing outside
+# GitHub's own runners.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  NODE_VERSION: "20"
+
+jobs:
+  monolith:
+    name: Monolith (lint + test)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: tejoma_recruiting
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DB_HOST: localhost
+      DB_PORT: "5432"
+      DB_NAME: tejoma_recruiting
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - run: npm ci
+
+      - name: Load schema
+        run: psql -h localhost -U postgres -d tejoma_recruiting -f schema.sql
+        env:
+          PGPASSWORD: postgres
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Test
+        run: npx vitest run --exclude "**/node_modules/**" --exclude "identity-service/**" --exclude "platform-governance-service/**" --exclude "tenant-directory-service/**" --exclude "api-gateway/**" --exclude "jd-parser-service/**" --exclude "candidate-service/**" --exclude "chat-service/**" --exclude "resume-service/**" --exclude "recruiting-service/**" --exclude "analytics-service/**" --exclude "matching-evaluation-service/**" --exclude "matching-reasoning-service/**" --exclude "matching-skill-discovery-service/**" --exclude "matching-bge-shadow-service/**" --exclude "role-intelligence-service/**" --exclude "career-intelligence-service/**" --exclude "dynamic-weighting-service/**" --exclude "job-service/**" --exclude "candidate-core-service/**" --exclude "matching-decision-service/**" --exclude "matching-scoring-service/**"
+
+  tier0-service:
+    name: ${{ matrix.service }} (lint + test)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: identity-service
+            db_name: tejoma_identity
+            needs_db: true
+          - service: platform-governance-service
+            db_name: tejoma_platform_governance
+            needs_db: true
+          - service: tenant-directory-service
+            db_name: tejoma_tenant_directory
+            needs_db: true
+          - service: api-gateway
+            db_name: ""
+            needs_db: false
+          - service: jd-parser-service
+            db_name: ""
+            needs_db: false
+          - service: candidate-service
+            db_name: tejoma_candidate
+            needs_db: true
+          - service: chat-service
+            db_name: tejoma_chat
+            needs_db: true
+          - service: resume-service
+            db_name: ""
+            needs_db: false
+          - service: recruiting-service
+            db_name: tejoma_recruiting_service
+            needs_db: true
+          - service: analytics-service
+            db_name: ""
+            needs_db: false
+          - service: matching-evaluation-service
+            db_name: tejoma_matching_evaluation
+            needs_db: true
+          - service: matching-reasoning-service
+            db_name: tejoma_matching_reasoning
+            needs_db: true
+          - service: matching-skill-discovery-service
+            db_name: tejoma_matching_skill_discovery
+            needs_db: true
+          - service: matching-bge-shadow-service
+            db_name: tejoma_matching_bge_shadow
+            needs_db: true
+          - service: role-intelligence-service
+            db_name: tejoma_role_intelligence
+            needs_db: true
+          - service: career-intelligence-service
+            db_name: tejoma_career_intelligence
+            needs_db: true
+          - service: dynamic-weighting-service
+            db_name: tejoma_dynamic_weighting
+            needs_db: true
+          - service: job-service
+            db_name: tejoma_job
+            needs_db: true
+          - service: candidate-core-service
+            db_name: tejoma_candidate_core
+            needs_db: true
+          - service: matching-decision-service
+            db_name: tejoma_matching_decision
+            needs_db: true
+          - service: matching-scoring-service
+            db_name: tejoma_matching_scoring
+            needs_db: true
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    defaults:
+      run:
+        working-directory: ${{ matrix.service }}
+    env:
+      DB_HOST: localhost
+      DB_PORT: "5432"
+      DB_NAME: ${{ matrix.db_name }}
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      # api-gateway's config/env.ts requires these at startup - real values are irrelevant
+      # for its own unit/integration tests (they never actually call out), see
+      # api-gateway/tests/*.test.ts, which override these per-test as needed.
+      IDENTITY_SERVICE_URL: http://127.0.0.1:1
+      PLATFORM_GOVERNANCE_SERVICE_URL: http://127.0.0.1:1
+      JD_PARSER_SERVICE_URL: http://127.0.0.1:1
+      CANDIDATE_SERVICE_URL: http://127.0.0.1:1
+      CHAT_SERVICE_URL: http://127.0.0.1:1
+      RESUME_SERVICE_URL: http://127.0.0.1:1
+      RECRUITING_SERVICE_URL: http://127.0.0.1:1
+      ANALYTICS_SERVICE_URL: http://127.0.0.1:1
+      MATCHING_EVALUATION_SERVICE_URL: http://127.0.0.1:1
+      MATCHING_SKILL_DISCOVERY_SERVICE_URL: http://127.0.0.1:1
+      MONOLITH_URL: http://127.0.0.1:1
+      # candidate-service's, chat-service's, resume-service's, recruiting-service's,
+      # analytics-service's, matching-evaluation-service's, and matching-skill-discovery-service's
+      # config/env.ts all require this at startup - overridden per-test by any test that actually
+      # exercises the monolith-proxy routes (tests/*.test.ts mock the upstream).
+      MONOLITH_INTERNAL_URL: http://127.0.0.1:1
+      # chat-service's and resume-service's config/env.ts both require this at startup. Not a real
+      # key - CI has no access to one, so their own tests mock the Gemini SDK entirely (see each
+      # service's tests' header comments); this placeholder only needs to satisfy the presence
+      # check, never actually calls out.
+      GEMINI_API_KEY: ci-placeholder-not-a-real-key
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: ${{ matrix.service }}/package-lock.json
+
+      - run: npm ci
+
+      - name: Create database
+        if: matrix.needs_db
+        run: psql -h localhost -U postgres -c "CREATE DATABASE ${{ matrix.db_name }}"
+        env:
+          PGPASSWORD: postgres
+
+      - name: Run migrations
+        if: matrix.needs_db
+        run: npm run migrate
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Test
+        run: npx vitest run

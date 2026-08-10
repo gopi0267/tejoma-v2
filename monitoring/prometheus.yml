@@ -8,6 +8,94 @@ scrape_configs:
       - targets: ['app:3006']
     metrics_path: /api/metrics
 
+  # Every Tier 0 microservice built this migration exposes real Prometheus metrics
+  # (src/utils/metrics.ts, prom-client) at the default /metrics path - none were ever added as a
+  # scrape target before, so this instrumentation existed but nothing collected it. One job per
+  # service (not one job with many targets) so each is individually visible/alertable in Grafana.
+  - job_name: 'api-gateway'
+    static_configs:
+      - targets: ['api-gateway:4000']
+
+  - job_name: 'identity-service'
+    static_configs:
+      - targets: ['identity-service:4001']
+
+  - job_name: 'platform-governance-service'
+    static_configs:
+      - targets: ['platform-governance-service:4002']
+
+  - job_name: 'tenant-directory-service'
+    static_configs:
+      - targets: ['tenant-directory-service:4003']
+
+  - job_name: 'jd-parser-service'
+    static_configs:
+      - targets: ['jd-parser-service:4004']
+
+  - job_name: 'candidate-service'
+    static_configs:
+      - targets: ['candidate-service:4005']
+
+  - job_name: 'chat-service'
+    static_configs:
+      - targets: ['chat-service:4006']
+
+  - job_name: 'resume-service'
+    static_configs:
+      - targets: ['resume-service:4007']
+
+  - job_name: 'recruiting-service'
+    static_configs:
+      - targets: ['recruiting-service:4009']
+
+  - job_name: 'analytics-service'
+    static_configs:
+      - targets: ['analytics-service:4010']
+
+  - job_name: 'matching-evaluation-service'
+    static_configs:
+      - targets: ['matching-evaluation-service:4011']
+
+  - job_name: 'matching-reasoning-service'
+    static_configs:
+      - targets: ['matching-reasoning-service:4012']
+
+  - job_name: 'matching-skill-discovery-service'
+    static_configs:
+      - targets: ['matching-skill-discovery-service:4013']
+
+  - job_name: 'matching-bge-shadow-service'
+    static_configs:
+      - targets: ['matching-bge-shadow-service:4014']
+
+  - job_name: 'role-intelligence-service'
+    static_configs:
+      - targets: ['role-intelligence-service:4015']
+
+  - job_name: 'career-intelligence-service'
+    static_configs:
+      - targets: ['career-intelligence-service:4016']
+
+  - job_name: 'dynamic-weighting-service'
+    static_configs:
+      - targets: ['dynamic-weighting-service:4017']
+
+  - job_name: 'job-service'
+    static_configs:
+      - targets: ['job-service:4018']
+
+  - job_name: 'candidate-core-service'
+    static_configs:
+      - targets: ['candidate-core-service:4019']
+
+  - job_name: 'matching-decision-service'
+    static_configs:
+      - targets: ['matching-decision-service:4020']
+
+  - job_name: 'matching-scoring-service'
+    static_configs:
+      - targets: ['matching-scoring-service:4021']
+
   - job_name: 'node-exporter'
     static_configs:
       - targets: ['node-exporter:9100']

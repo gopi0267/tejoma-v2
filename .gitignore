@@ -35,3 +35,20 @@ nginx/certbot/
 
 # Nginx/app log volumes
 logs/
+
+# Generated migration/cutover audit artifacts (scripts/candidate-service-mismatch-report.ts and
+# similar) - operational output, not source, regenerable on demand
+reports/
+
+# Terraform local state and per-environment overrides - state especially must never be committed
+# (it can contain sensitive resource attributes) - see terraform/README.md's "before your first
+# real apply" section on moving to a remote S3+DynamoDB backend instead.
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.*
+terraform/*.tfvars
+!terraform/terraform.tfvars.example
+terraform/crash.log
+# terraform/.terraform.lock.hcl is deliberately NOT ignored - it locks exact provider versions
+# for reproducibility and is meant to be committed, unlike the state/cache files above it.
+

@@ -5,7 +5,7 @@ import {
   toSyntheticCandidateFromAccount,
   toSyntheticJobFromQuery,
 } from '../../src/matching/matchingApi.js';
-import { setActiveModelType } from '../../src/services.js';
+import { setActiveModelType } from '../../src/matching/services.js';
 import type { Candidate, Job, CandidateAccount } from '../../src/types.js';
 
 // Enterprise AI Matching Architecture, Phase 0 - "Unified Matching API across all four surfaces".

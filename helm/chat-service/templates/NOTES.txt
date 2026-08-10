@@ -1,0 +1,17 @@
+chat-service ({{ .Chart.AppVersion }}) deployed as {{ include "chat-service.fullname" . }}.
+
+Check rollout status:
+  kubectl rollout status deployment/{{ include "chat-service.fullname" . }} -n {{ .Release.Namespace }}
+
+Check health:
+  kubectl port-forward svc/{{ include "chat-service.fullname" . }} 4006:{{ .Values.service.port }} -n {{ .Release.Namespace }}
+  curl http://localhost:4006/health
+
+Reminder: this chart does NOT run database migrations. Before the first deploy to a new
+environment, run chat-service/scripts/migrate.ts (and validate-schema.ts) against the target
+database out-of-band, then scripts/backfill-chat-service.ts from the monolith - see
+chat-service/README.md and MIGRATION_RUNBOOK.md.
+
+Confirm JWT_SECRET matches the monolith's own exactly (401s otherwise), and that GEMINI_API_KEY
+is a real, working key - chat generation and embedding are this service's entire purpose, there is
+no fallback path.

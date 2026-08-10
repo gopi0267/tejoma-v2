@@ -1,0 +1,6 @@
+apiVersion: v2
+name: matching-bge-shadow-service
+description: Tejoma Matching BGE Shadow Service - Tier 0 (Batch 28). Owns bge_retrieval_shadow_comparisons - the BGE-M3/BGE-Reranker-v2-m3 retrieval shadow comparison, the fourth extracted slice of the Matching domain.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

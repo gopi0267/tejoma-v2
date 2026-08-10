@@ -1,0 +1,19 @@
+candidate-core-service ({{ .Chart.AppVersion }}) deployed as {{ include "candidate-core-service.fullname" . }}.
+
+Check rollout status:
+  kubectl rollout status deployment/{{ include "candidate-core-service.fullname" . }} -n {{ .Release.Namespace }}
+
+Check health:
+  kubectl port-forward svc/{{ include "candidate-core-service.fullname" . }} 4019:{{ .Values.service.port }} -n {{ .Release.Namespace }}
+  curl http://localhost:4019/health
+
+Reminder: this chart does NOT run database migrations. Before the first deploy to a new
+environment, run candidate-core-service/scripts/migrate.ts (and validate-schema.ts) against the
+target database out-of-band, then scripts/backfill-candidate-core-service.ts from the monolith
+- see candidate-core-service/README.md and MIGRATION_RUNBOOK.md.
+
+This service has no gateway route yet. It receives a live dual-written copy of every candidates
+row on create/update/delete (see src/dualWrite.ts's upsertCandidate/patchCandidate/
+deleteCandidateMirror, gated behind DUAL_WRITE_ENABLED, off by default). Its own GET
+/internal/candidates and /internal/candidates/:id are real and ready for a future caller once cut
+over.

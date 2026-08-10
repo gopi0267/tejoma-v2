@@ -28,6 +28,9 @@ services:
       DB_HOST: host.docker.internal
       JD_NLP_SERVICE_URL: http://jd-nlp-service:8008
       MATCHING_ML_SERVICE_URL: http://matching-ml-service:8009
+      MATCHING_SCORING_SERVICE_URL: http://matching-scoring-service:4021
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
     extra_hosts:
       # Docker Desktop (Windows/Mac) resolves this natively already; explicit for portability
       # to a Linux server later, where it's needed.
@@ -37,9 +40,33 @@ services:
         condition: service_healthy
       matching-ml-service:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     restart: unless-stopped
     networks:
       - internal
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # Final monolith decommission, item 1 - pub/sub backbone for decentralized real-time
+  # notifications (item 2) and connection target for the already-coded-but-previously-inert
+  # BullMQ retrain queue (src/queue/retrainQueue.ts, fail-open when unreachable - see its own
+  # header comment). No persistence needed - both use cases are transient (in-flight pub/sub
+  # messages, a small retrain job queue), never a system of record, so no volume is mounted.
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
     logging:
       driver: json-file
       options:
@@ -78,13 +105,705 @@ services:
         max-file: "5"
 
   # ============================================================================
+  # TIER 0 MICROSERVICES
+  # ============================================================================
+  # All 19 share one pattern: native Postgres on the host (DB_HOST=host.docker.internal, same as
+  # `app` above - Postgres itself is NOT containerized, see DEPLOYMENT.md), DB_USER/DB_PASSWORD/
+  # JWT_SECRET/GEMINI_API_KEY inherited unchanged from .env.local via env_file (identical to how
+  # `app` already does it). DB_NAME is explicitly overridden per service below - it must be, since
+  # `env_file: .env.local` always resolves to the ROOT .env.local (Compose resolves env_file paths
+  # relative to this file, never to a service's own build context), and that root file sets
+  # DB_NAME=tejoma_recruiting for the monolith. Without an explicit override here, every one of
+  # these services would silently inherit that value and connect to the monolith's own database
+  # instead of its own - each service's own src/db.ts fallback default (e.g. `DB_NAME ||
+  # 'tejoma_job'`) only ever applies when DB_NAME is completely unset, which it never is once
+  # env_file has already supplied one. This was a real, previously-undetected bug across every
+  # Tier 0 service in this file: /health only ever ran `SELECT 1`, which succeeds against any
+  # reachable database, so it never caught services being connected to the wrong one - found by
+  # testing an actual write against matching-scoring-service's real table, not by inspection.
+  # Before first `docker-compose up`, each service's own database must exist and be migrated - see
+  # MIGRATION_RUNBOOK.md's full-migration section: `npm run migrate` (from within each service
+  # directory, against its real DB_NAME) then, for every dual-write mirror, `npx tsx
+  # scripts/backfill-<service>.ts` from the repo root once real data exists to copy.
+
+  identity-service:
+    build:
+      context: ./identity-service
+    env_file:
+      - .env.local
+    environment:
+      NODE_ENV: production
+      DB_HOST: host.docker.internal
+      DB_NAME: tejoma_identity
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4001/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  platform-governance-service:
+    build:
+      context: ./platform-governance-service
+    env_file:
+      - .env.local
+    environment:
+      NODE_ENV: production
+      DB_HOST: host.docker.internal
+      DB_NAME: tejoma_platform_governance
+      IDENTITY_SERVICE_URL: http://identity-service:4001
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      identity-service:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4002/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  tenant-directory-service:
+    build:
+      context: ./tenant-directory-service
+    env_file:
+      - .env.local
+    environment:
+      NODE_ENV: production
+      DB_HOST: host.docker.internal
+      DB_NAME: tejoma_tenant_directory
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4003/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  jd-parser-service:
+    build:
+      context: ./jd-parser-service
+    env_file:
+      - .env.local
+    environment:
+      NODE_ENV: production
+      JD_NLP_SERVICE_URL: http://jd-nlp-service:8008
+    depends_on:
+      jd-nlp-service:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4004/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  candidate-service:
+    build:
+      context: ./candidate-service
+    env_file:
+      - .env.local
+    environment:
+      NODE_ENV: production
+      DB_HOST: host.docker.internal
+      DB_NAME: tejoma_candidate
+      MONOLITH_INTERNAL_URL: http://app:3006
+      IDENTITY_SERVICE_URL: http://identity-service:4001
+      MATCHING_SCORING_SERVICE_URL: http://matching-scoring-service:4021
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      app:
+        condition: service_healthy
+      identity-service:
+        condition: service_healthy
+      matching-scoring-service:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4005/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  chat-service:
+    build:
+      context: ./chat-service
+    env_file:
+      - .env.local
+    environment:
+      NODE_ENV: production
+      DB_HOST: host.docker.internal
+      DB_NAME: tejoma_chat
+      MONOLITH_INTERNAL_URL: http://app:3006
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      app:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4006/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  resume-service:
+    build:
+      context: ./resume-service
+    env_file:
+      - .env.local
+    environment:
+      NODE_ENV: production
+      MONOLITH_INTERNAL_URL: http://app:3006
+    depends_on:
+      app:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4007/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  recruiting-service:
+    build:
+      context: ./recruiting-service
+    env_file:
+      - .env.local
+    environment:
+      NODE_ENV: production
+      DB_HOST: host.docker.internal
+      DB_NAME: tejoma_recruiting_service
+      MONOLITH_INTERNAL_URL: http://app:3006
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      app:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4009/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  analytics-service:
+    build:
+      context: ./analytics-service
+    env_file:
+      - .env.local
+    environment:
+      NODE_ENV: production
+      MONOLITH_INTERNAL_URL: http://app:3006
+      DB_HOST: host.docker.internal
+      DB_PORT: "5432"
+      DB_NAME: tejoma_analytics
+      DB_USER: postgres
+      DB_PASSWORD: "3268"
+    depends_on:
+      app:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4010/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  matching-evaluation-service:
+    build:
+      context: ./matching-evaluation-service
+    env_file:
+      - .env.local
+    environment:
+      NODE_ENV: production
+      DB_HOST: host.docker.internal
+      DB_NAME: tejoma_matching_evaluation
+      MONOLITH_INTERNAL_URL: http://app:3006
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      app:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4011/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  matching-reasoning-service:
+    build:
+      context: ./matching-reasoning-service
+    env_file:
+      - .env.local
+    environment:
+      NODE_ENV: production
+      DB_HOST: host.docker.internal
+      DB_NAME: tejoma_matching_reasoning
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4012/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  matching-skill-discovery-service:
+    build:
+      context: ./matching-skill-discovery-service
+    env_file:
+      - .env.local
+    environment:
+      NODE_ENV: production
+      DB_HOST: host.docker.internal
+      DB_NAME: tejoma_matching_skill_discovery
+      MONOLITH_INTERNAL_URL: http://app:3006
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      app:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4013/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  matching-bge-shadow-service:
+    build:
+      context: ./matching-bge-shadow-service
+    env_file:
+      - .env.local
+    environment:
+      NODE_ENV: production
+      DB_HOST: host.docker.internal
+      DB_NAME: tejoma_matching_bge_shadow
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4014/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  role-intelligence-service:
+    build:
+      context: ./role-intelligence-service
+    env_file:
+      - .env.local
+    environment:
+      NODE_ENV: production
+      DB_HOST: host.docker.internal
+      DB_NAME: tejoma_role_intelligence
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4015/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  career-intelligence-service:
+    build:
+      context: ./career-intelligence-service
+    env_file:
+      - .env.local
+    environment:
+      NODE_ENV: production
+      DB_HOST: host.docker.internal
+      DB_NAME: tejoma_career_intelligence
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4016/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  dynamic-weighting-service:
+    build:
+      context: ./dynamic-weighting-service
+    env_file:
+      - .env.local
+    environment:
+      NODE_ENV: production
+      DB_HOST: host.docker.internal
+      DB_NAME: tejoma_dynamic_weighting
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4017/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  job-service:
+    build:
+      context: ./job-service
+    env_file:
+      - .env.local
+    environment:
+      NODE_ENV: production
+      DB_HOST: host.docker.internal
+      DB_NAME: tejoma_job
+      MONOLITH_INTERNAL_URL: http://app:3006
+      CANDIDATE_CORE_SERVICE_URL: http://candidate-core-service:4019
+      MATCHING_SCORING_SERVICE_URL: http://matching-scoring-service:4021
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      app:
+        condition: service_healthy
+      candidate-core-service:
+        condition: service_healthy
+      matching-scoring-service:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4018/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  candidate-core-service:
+    build:
+      context: ./candidate-core-service
+    env_file:
+      - .env.local
+    environment:
+      NODE_ENV: production
+      DB_HOST: host.docker.internal
+      DB_NAME: tejoma_candidate_core
+      MONOLITH_INTERNAL_URL: http://app:3006
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      app:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4019/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  matching-decision-service:
+    build:
+      context: ./matching-decision-service
+    env_file:
+      - .env.local
+    environment:
+      NODE_ENV: production
+      DB_HOST: host.docker.internal
+      DB_NAME: tejoma_matching_decision
+      MONOLITH_INTERNAL_URL: http://app:3006
+      JOB_SERVICE_URL: http://job-service:4018
+      CANDIDATE_CORE_SERVICE_URL: http://candidate-core-service:4019
+      MATCHING_SCORING_SERVICE_URL: http://matching-scoring-service:4021
+      ANALYTICS_SERVICE_URL: http://analytics-service:4010
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      app:
+        condition: service_healthy
+      job-service:
+        condition: service_healthy
+      candidate-core-service:
+        condition: service_healthy
+      matching-scoring-service:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4020/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  matching-scoring-service:
+    build:
+      context: ./matching-scoring-service
+    env_file:
+      - .env.local
+    environment:
+      NODE_ENV: production
+      DB_HOST: host.docker.internal
+      DB_NAME: tejoma_matching_scoring
+      MATCHING_ML_SERVICE_URL: http://matching-ml-service:8009
+      MONOLITH_INTERNAL_URL: http://app:3006
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      matching-ml-service:
+        condition: service_healthy
+      app:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4021/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # ============================================================================
+  # API GATEWAY
+  # ============================================================================
+  # The real entry point once nginx is repointed at it (see nginx/conf.d/tejoma.conf's
+  # tejoma_gateway upstream) - routes the ~19 paths already migrated to Tier 0 explicitly, falls
+  # through to the monolith (MONOLITH_URL) for everything else, exactly as it always has. Depends
+  # on every service it can route to directly, plus the monolith fallback, being healthy first.
+
+  api-gateway:
+    build:
+      context: ./api-gateway
+    env_file:
+      - .env.local
+    environment:
+      NODE_ENV: production
+      IDENTITY_SERVICE_URL: http://identity-service:4001
+      PLATFORM_GOVERNANCE_SERVICE_URL: http://platform-governance-service:4002
+      JD_PARSER_SERVICE_URL: http://jd-parser-service:4004
+      CANDIDATE_SERVICE_URL: http://candidate-service:4005
+      CHAT_SERVICE_URL: http://chat-service:4006
+      RESUME_SERVICE_URL: http://resume-service:4007
+      RECRUITING_SERVICE_URL: http://recruiting-service:4009
+      ANALYTICS_SERVICE_URL: http://analytics-service:4010
+      MATCHING_EVALUATION_SERVICE_URL: http://matching-evaluation-service:4011
+      MATCHING_SKILL_DISCOVERY_SERVICE_URL: http://matching-skill-discovery-service:4013
+      MATCHING_SCORING_SERVICE_URL: http://matching-scoring-service:4021
+      CANDIDATE_CORE_SERVICE_URL: http://candidate-core-service:4019
+      JOB_SERVICE_URL: http://job-service:4018
+      MATCHING_DECISION_SERVICE_URL: http://matching-decision-service:4020
+      MONOLITH_URL: http://app:3006
+    depends_on:
+      app:
+        condition: service_healthy
+      identity-service:
+        condition: service_healthy
+      platform-governance-service:
+        condition: service_healthy
+      jd-parser-service:
+        condition: service_healthy
+      candidate-service:
+        condition: service_healthy
+      chat-service:
+        condition: service_healthy
+      resume-service:
+        condition: service_healthy
+      recruiting-service:
+        condition: service_healthy
+      analytics-service:
+        condition: service_healthy
+      matching-evaluation-service:
+        condition: service_healthy
+      matching-skill-discovery-service:
+        condition: service_healthy
+      matching-scoring-service:
+        condition: service_healthy
+      candidate-core-service:
+        condition: service_healthy
+      job-service:
+        condition: service_healthy
+      matching-decision-service:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4000/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # ============================================================================
   # REVERSE PROXY
   # ============================================================================
 
   nginx:
     image: nginx:1.27-alpine
     depends_on:
-      app:
+      # nginx now proxies to api-gateway (tejoma_gateway upstream), not straight to `app` - see
+      # nginx/conf.d/tejoma.conf's header comment. api-gateway itself depends on `app` (and every
+      # other service it can route to) being healthy first, so this transitively still waits on
+      # the monolith too.
+      api-gateway:
         condition: service_healthy
     ports:
       - "80:80"

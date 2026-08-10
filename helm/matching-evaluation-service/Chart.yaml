@@ -1,0 +1,6 @@
+apiVersion: v2
+name: matching-evaluation-service
+description: Tejoma Matching Evaluation Service - Tier 0 (Batch 24). Owns ranking evaluation and Learning-to-Rank training - the first extracted slice of the Matching domain.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

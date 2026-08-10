@@ -1,0 +1,6 @@
+apiVersion: v2
+name: candidate-service
+description: Tejoma Candidate Service - Tier 0 (Batch 16). Owns the candidate self-service bounded context - profile, experience, job discovery, applications, decisions, matches.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

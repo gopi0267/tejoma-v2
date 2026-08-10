@@ -1,0 +1,19 @@
+career-intelligence-service ({{ .Chart.AppVersion }}) deployed as {{ include "career-intelligence-service.fullname" . }}.
+
+Check rollout status:
+  kubectl rollout status deployment/{{ include "career-intelligence-service.fullname" . }} -n {{ .Release.Namespace }}
+
+Check health:
+  kubectl port-forward svc/{{ include "career-intelligence-service.fullname" . }} 4016:{{ .Values.service.port }} -n {{ .Release.Namespace }}
+  curl http://localhost:4016/health
+
+Reminder: this chart does NOT run database migrations. Before the first deploy to a new
+environment, run career-intelligence-service/scripts/migrate.ts (and validate-schema.ts) against the
+target database out-of-band, then scripts/backfill-career-intelligence-service.ts from the monolith
+- see career-intelligence-service/README.md and MIGRATION_RUNBOOK.md.
+
+This service has no gateway route and no user-facing HTTP surface. It is called by the monolith
+itself (src/careerIntelligenceServiceShadow.ts, fire-and-forget) as a shadow-validation client,
+gated behind SHADOW_CAREER_INTELLIGENCE_ENABLED (off by default) - set
+CAREER_INTELLIGENCE_SERVICE_URL on the monolith's own deployment to enable comparison once this
+service is confirmed healthy.

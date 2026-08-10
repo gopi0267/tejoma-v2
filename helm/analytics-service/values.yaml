@@ -1,0 +1,75 @@
+# Default values for analytics-service. See helm/identity-service/values.yaml's header comment
+# for the two supported ways to supply secrets - identical pattern, applied here. Unlike most
+# Tier 0 charts, there is no DB_* config here at all - this service owns no database (see
+# analytics-service/README.md's "Why this is proxy-only").
+
+replicaCount: 2
+
+image:
+  repository: ""  # e.g. <account-id>.dkr.ecr.ap-south-1.amazonaws.com/tejoma-analytics-service
+  tag: ""
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 4010
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+
+probes:
+  liveness:
+    path: /live
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+  readiness:
+    path: /ready
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+terminationGracePeriodSeconds: 30
+preStopSleepSeconds: 5
+
+config:
+  NODE_ENV: production
+  LOG_LEVEL: info
+  FRONTEND_URL: ""
+  # Required, not graceful-null - this service's entire functionality is proxying here (see
+  # src/config/env.ts's header comment).
+  MONOLITH_INTERNAL_URL: ""
+
+existingSecret: ""
+secrets:
+  # Same value as the monolith's own JWT_SECRET - this service verifies the exact staff token the
+  # monolith issues today, not a JWKS-based one. Must match exactly, or every request will 401.
+  JWT_SECRET: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "4010"
+  prometheus.io/path: /metrics
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

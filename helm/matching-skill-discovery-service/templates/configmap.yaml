@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "matching-skill-discovery-service.fullname" . }}-config
+  labels:
+    {{- include "matching-skill-discovery-service.labels" . | nindent 4 }}
+data:
+  PORT: "4013"
+  {{- range $key, $value := .Values.config }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: tenant-directory-service
+description: Tejoma Tenant Directory Service - Tier 0 (Phase 11/12). Owns the companies table.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

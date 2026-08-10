@@ -1,0 +1,6 @@
+apiVersion: v2
+name: resume-service
+description: Tejoma Resume Service - Tier 0 (Batch 18). Owns resume text extraction, the Gemini-based parsing pipeline, and permanent resume file storage.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

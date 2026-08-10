@@ -1,0 +1,18 @@
+recruiting-service ({{ .Chart.AppVersion }}) deployed as {{ include "recruiting-service.fullname" . }}.
+
+Check rollout status:
+  kubectl rollout status deployment/{{ include "recruiting-service.fullname" . }} -n {{ .Release.Namespace }}
+
+Check health:
+  kubectl port-forward svc/{{ include "recruiting-service.fullname" . }} 4009:{{ .Values.service.port }} -n {{ .Release.Namespace }}
+  curl http://localhost:4009/health
+
+Reminder: this chart does NOT run database migrations. Before the first deploy to a new
+environment, run recruiting-service/scripts/migrate.ts (and validate-schema.ts) against the target
+database out-of-band, then scripts/backfill-recruiting-service.ts from the monolith - see
+recruiting-service/README.md and MIGRATION_RUNBOOK.md.
+
+Confirm JWT_SECRET matches the monolith's own exactly (401s otherwise). This service is a
+deliberately partial extraction (recruiter-matches + recruiter-notifications only) - see
+recruiting-service/README.md's "Why this extraction is partial" before assuming job/swipe/review/
+search routes live here too.

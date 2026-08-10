@@ -1,0 +1,18 @@
+matching-bge-shadow-service ({{ .Chart.AppVersion }}) deployed as {{ include "matching-bge-shadow-service.fullname" . }}.
+
+Check rollout status:
+  kubectl rollout status deployment/{{ include "matching-bge-shadow-service.fullname" . }} -n {{ .Release.Namespace }}
+
+Check health:
+  kubectl port-forward svc/{{ include "matching-bge-shadow-service.fullname" . }} 4014:{{ .Values.service.port }} -n {{ .Release.Namespace }}
+  curl http://localhost:4014/health
+
+Reminder: this chart does NOT run database migrations. Before the first deploy to a new
+environment, run matching-bge-shadow-service/scripts/migrate.ts (and validate-schema.ts) against
+the target database out-of-band - see matching-bge-shadow-service/README.md and
+MIGRATION_RUNBOOK.md. No backfill script exists for this service - unlike every prior batch, it
+owns bge_retrieval_shadow_comparisons as a genuine cutover, not a mirror (see README's "Why this
+one is different").
+
+Set MATCHING_BGE_SHADOW_SERVICE_URL on the monolith's own deployment to point at this service -
+src/bgeShadowServiceClient.ts silently no-ops (same as before this batch) if it's unset.

@@ -18,6 +18,9 @@ import {
 import { otpRequestLimiter } from '../middleware/rateLimit.middleware.js';
 import { validatePassword } from '../utils/password.js';
 import { requireAuth } from '../middleware/auth.middleware.js';
+// Tier 0 migration (Batch 13c) - see src/shadowRead.ts's header comment for the full contract.
+// Disabled by default (SHADOW_READ_ENABLED); a no-op until an operator opts in.
+import { shadowReadLogin, type LoginOutcome } from '../shadowRead.js';
 
 const router = Router();
 
@@ -246,6 +249,19 @@ router.post('/auth/signup/complete', async (_req, res) => {
 
 // ==================== LOGIN ====================
 router.post('/auth/login', async (req, res) => {
+  // Batch 13c shadow-read: registered before any early return, fires exactly once after the
+  // response has actually been sent (res.on('finish')), regardless of which exit point below was
+  // taken - a single, minimal-touch hook rather than restructuring this handler's existing
+  // early-return control flow. See src/shadowRead.ts's header comment for the full contract.
+  let shadowOutcome: LoginOutcome | null = null;
+  res.on('finish', () => {
+    const rawIdentifierForShadow = req.body?.identifier || req.body?.email;
+    const passwordForShadow = req.body?.password;
+    if (shadowOutcome && rawIdentifierForShadow && passwordForShadow) {
+      shadowReadLogin(rawIdentifierForShadow, passwordForShadow, shadowOutcome);
+    }
+  });
+
   try {
     const { email, identifier: rawIdentifierBody, password, remember } = req.body;
     const rawIdentifier = rawIdentifierBody || email; // supports both the new `identifier` field and legacy `email` field
@@ -256,6 +272,7 @@ router.post('/auth/login', async (req, res) => {
 
     const identifier = normalizeIdentifier(rawIdentifier);
     if (!identifier) {
+      shadowOutcome = { success: false, reason: 'invalid_identifier_format' };
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
@@ -266,24 +283,30 @@ router.post('/auth/login', async (req, res) => {
       // a generic "invalid credentials" (which would be indistinguishable from a typo).
       const request = await db.getCompanyRegistrationRequestByIdentifier(identifier);
       if (request?.status === 'pending') {
+        shadowOutcome = { success: false, reason: 'registration_pending' };
         return res.status(401).json({ error: 'Your company registration is pending administrator approval.' });
       }
       if (request?.status === 'rejected') {
+        shadowOutcome = { success: false, reason: 'registration_rejected' };
         return res.status(401).json({ error: 'Your company registration has been rejected.' });
       }
+      shadowOutcome = { success: false, reason: 'unknown_identifier' };
       return res.status(401).json({ error: 'Invalid email or password' });
     }
     if (!user.is_active || user.deleted_at) {
+      shadowOutcome = { success: false, reason: 'account_deactivated' };
       return res.status(401).json({ error: 'This account has been deactivated' });
     }
 
     const passwordMatch = await bcrypt.compare(password, user.password_hash);
     if (!passwordMatch) {
+      shadowOutcome = { success: false, reason: 'wrong_password' };
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
     const access_token = await issueSession(req, res, user, remember !== false);
     db.updateLastLogin(user.id).catch((err) => console.error('Failed to record last login:', err));
+    shadowOutcome = { success: true, userId: user.id, role: user.role, companyId: user.company_id };
     res.json({
       access_token,
       user_info: toUserInfo(user),

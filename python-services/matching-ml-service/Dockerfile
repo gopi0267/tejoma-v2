@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY main.py ensemble.py embeddings.py ./
+COPY main.py ensemble.py embeddings.py ranker.py ./
 RUN mkdir -p models
 
 RUN useradd --create-home tejoma && chown -R tejoma:tejoma /app

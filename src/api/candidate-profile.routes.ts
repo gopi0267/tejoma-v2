@@ -1,6 +1,10 @@
 import { Router } from 'express';
 import { db } from '../db.js';
 import { requireCandidateAuth } from '../middleware/auth.middleware.js';
+import { CANDIDATE_ACCESS_TOKEN_COOKIE } from '../utils/tokens.js';
+// Tier 0 migration (Batch 16) - see src/candidateShadow.ts's header comment for the full contract.
+// Disabled by default (SHADOW_CANDIDATE_ENABLED); a no-op until an operator opts in.
+import { shadowGetCandidateProfile } from '../candidateShadow.js';
 
 const router = Router();
 
@@ -77,13 +81,26 @@ function toProfileResponse(candidate: any, hasExperience: boolean) {
 
 // ==================== GET OWN PROFILE ====================
 router.get('/candidate-profile/me', requireCandidateAuth, async (req, res) => {
+  // Batch 16 shadow-validation: registered before any early return, fires exactly once after the
+  // response has actually been sent (res.on('finish')), mirroring auth.routes.ts's POST
+  // /auth/login shadow-read hook and jd-parser.routes.ts's shadow-validation hook exactly.
+  let shadowProfile: Record<string, unknown> | null = null;
+  res.on('finish', () => {
+    const accessToken = req.cookies?.[CANDIDATE_ACCESS_TOKEN_COOKIE];
+    if (shadowProfile && accessToken) {
+      shadowGetCandidateProfile(req.candidate!.candidate_id, shadowProfile, accessToken);
+    }
+  });
+
   try {
     const candidate = await db.getCandidateAccountById(req.candidate!.candidate_id);
     if (!candidate || !candidate.is_active || candidate.deleted_at) {
       return res.status(404).json({ error: 'Profile not found' });
     }
     const experiences = await db.getCandidateExperiences(req.candidate!.candidate_id);
-    res.json(toProfileResponse(candidate, experiences.length > 0));
+    const responseBody = toProfileResponse(candidate, experiences.length > 0);
+    shadowProfile = responseBody;
+    res.json(responseBody);
   } catch (error) {
     console.error('Get candidate profile error:', error);
     res.status(500).json({ error: 'Failed to load profile' });

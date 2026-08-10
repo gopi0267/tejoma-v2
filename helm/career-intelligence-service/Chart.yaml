@@ -1,0 +1,6 @@
+apiVersion: v2
+name: career-intelligence-service
+description: Tejoma Career Intelligence Service - Tier 0 (Batch 30). Owns career_trajectories (job-sequence normalization, progression, stability, trajectory embedding, future-role prediction) plus a dual-written mirror of role_profiles - the sixth extracted slice of the Matching domain.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

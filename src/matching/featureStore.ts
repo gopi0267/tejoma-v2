@@ -18,7 +18,7 @@ import { db } from '../db.js';
 import { logger } from '../utils/logger.js';
 import type { Job, MatchFeatureRecord } from '../types.js';
 import type { MatchWeighting, MatchTier } from './matchingApi.js';
-import type { MatchScoreResult } from '../services.js';
+import type { MatchScoreResult } from './services.js';
 
 export const FEATURE_SCHEMA_VERSION = 1;
 

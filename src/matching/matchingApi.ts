@@ -31,10 +31,10 @@ import {
   calculateMatchScoresForJobsBatch,
   calculateDynamicMatchScoresBatch,
   MatchScoreResult,
-} from '../services.js';
+} from './services.js';
 import { hybridRetrieveCandidates, type VectorSearchProvider } from './retrieval.js';
 import { persistMatchFeatures } from './featureStore.js';
-import { activeModelType } from '../services.js';
+import { activeModelType } from './services.js';
 
 export type MatchTier = 'heuristic' | 'full';
 // Enterprise AI Matching Architecture, Phase 2 - 'static' is the existing computeFeatureScore
@@ -196,6 +196,22 @@ export async function rankCandidatesForJob(
   }
 
   return ranked;
+}
+
+// Microservices Migration, Batch 23 (Matching Service extraction prep) - single-candidate
+// convenience wrapper around rankCandidatesForJob's full-pipeline scoring, for the two call sites
+// (swipe.routes.ts's re-score-after-decision path, recruiter-review.routes.ts's fresh-score path)
+// that previously imported calculateMatchScore from services.ts directly, bypassing this module.
+// Same result as calling calculateMatchScore(job, candidate, options) did - full tier, static
+// weighting (matching what both call sites already used), never persists (neither call site
+// passed a `persist` option before this change either).
+export async function scoreCandidateForJob(
+  job: Job,
+  candidate: Candidate,
+  options?: { skipGeminiSummary?: boolean }
+): Promise<MatchScoreResult> {
+  const [ranked] = await rankCandidatesForJob(job, [candidate], { tier: 'full', skipGeminiSummary: options?.skipGeminiSummary });
+  return ranked.score!;
 }
 
 // "Rank jobs for a candidate" - the shape used by candidate job discovery (real jobs, synthetic

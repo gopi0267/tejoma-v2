@@ -8,7 +8,7 @@ import {
     setRetrainingStatus,
     updateLastTrainingTimestamp,
     trainModelOnStartup,
-} from '../services.js';
+} from '../matching/services.js';
 import { getEnsembleHealth } from '../algorithms/ml-models.js';
 import { getRankerHealth } from '../algorithms/ltr-models.js';
 import { trainLearningToRank } from '../matching/learningToRank.js';
@@ -28,11 +28,18 @@ router.get('/ml/config', requireRole('recruiter', 'admin'), (req, res) => {
     });
 });
 
-router.post('/ml/config', requireRole('admin'), (req, res) => {
+router.post('/ml/config', requireRole('admin'), async (req, res) => {
     const { activeModelType: newType } = req.body;
     if (newType && ['heuristic', 'ml_tree', 'random_forest', 'hybrid_weighted'].includes(newType)) {
-      setActiveModelType(newType);
-      res.json({ activeModelType: newType, isRetrainingInProgress, lastTrainingTimestamp });
+      try {
+        // Now persists to matching_model_config, not just an in-memory mutation - see
+        // src/matching/services.ts's header comment on activeModelType (Batch 23).
+        await setActiveModelType(newType);
+        res.json({ activeModelType: newType, isRetrainingInProgress, lastTrainingTimestamp });
+      } catch (error: any) {
+        logger.error({ err: error.message }, 'Failed to persist active model type');
+        res.status(500).json({ error: 'Failed to save model configuration: ' + error.message });
+      }
     } else {
       res.status(400).json({ error: 'Invalid activeModelType' });
     }

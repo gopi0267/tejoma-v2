@@ -1,5 +1,5 @@
 // Precomputes and stores BERT embeddings for candidates/jobs, once, at creation time - so
-// real-time match scoring (src/services.ts) never has to call the embedding model itself, just
+// real-time match scoring (src/matching/services.ts) never has to call the embedding model itself, just
 // compare two already-stored vectors (fast, in-memory cosineSimilarity).
 //
 // Distinct from src/rag.service.ts's indexing (which uses Gemini embeddings of structured text
@@ -17,7 +17,7 @@ export async function indexCandidateEmbedding(candidate: Candidate): Promise<voi
   await db.updateCandidate(candidate.id, { resume_embedding: embedding }, candidate.company_id);
   // Enterprise AI Matching Architecture, Phase 1 - multi-facet embeddings, additive alongside the
   // whole-document resume_embedding above (which is unaffected by this call and is still what
-  // src/services.ts reads for matching). Best-effort per facet: a missing/short text for one
+  // src/matching/services.ts reads for matching). Best-effort per facet: a missing/short text for one
   // facet simply leaves that one column null, exactly like the existing resume_embedding
   // resilience pattern - never blocks or fails candidate creation.
   await indexCandidateFacetEmbeddings(candidate);
@@ -34,7 +34,7 @@ export async function indexJobEmbedding(job: Job): Promise<void> {
 // ==================== MULTI-FACET EMBEDDINGS (Phase 1) ====================
 // Same embedding model/service as the whole-document embeddings above (all-MiniLM-L6-v2 via
 // python-services/matching-ml-service) - just called with narrower text slices. Not yet read by
-// src/services.ts's scoring functions (Phase 2 work) - purely additive storage this phase.
+// src/matching/services.ts's scoring functions (Phase 2 work) - purely additive storage this phase.
 
 function buildCandidateFacetTexts(candidate: Candidate): { skills: string; responsibilities: string; title: string } {
   return {

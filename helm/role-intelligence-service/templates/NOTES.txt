@@ -1,0 +1,17 @@
+role-intelligence-service ({{ .Chart.AppVersion }}) deployed as {{ include "role-intelligence-service.fullname" . }}.
+
+Check rollout status:
+  kubectl rollout status deployment/{{ include "role-intelligence-service.fullname" . }} -n {{ .Release.Namespace }}
+
+Check health:
+  kubectl port-forward svc/{{ include "role-intelligence-service.fullname" . }} 4015:{{ .Values.service.port }} -n {{ .Release.Namespace }}
+  curl http://localhost:4015/health
+
+Reminder: this chart does NOT run database migrations. Before the first deploy to a new
+environment, run role-intelligence-service/scripts/migrate.ts (and validate-schema.ts) against the
+target database out-of-band, then scripts/backfill-role-intelligence-service.ts from the monolith
+- see role-intelligence-service/README.md and MIGRATION_RUNBOOK.md.
+
+This service has no gateway route and no user-facing HTTP surface - nothing in the monolith
+currently reads role-profile data over HTTP. Its own /internal/* endpoints are ready for whichever
+future caller needs them.

@@ -99,12 +99,29 @@ exactly as they're called today via `JD_NLP_SERVICE_URL`/`MATCHING_ML_SERVICE_UR
 deliberate choice: the browser never calls them directly, so exposing them publicly would add
 attack surface for no functional benefit.
 
+**Updated by the full-migration cutover**: Nginx no longer proxies straight to `app`. It now
+proxies to `api-gateway`, which explicitly routes every path already migrated to a Tier 0 service
+(`api-gateway/src/proxy.ts`'s `ROUTES` table - identity-service, platform-governance-service,
+jd-parser-service, candidate-service, chat-service, resume-service, recruiting-service,
+analytics-service, matching-evaluation-service, matching-skill-discovery-service) and falls
+through to `app` (`MONOLITH_URL`) for everything not yet migrated - which is most of the system:
+the live-scoring engine, job posting, swipe/decision recording, recruiter review, and candidate
+search all still live in `app`. `api-gateway` itself `depends_on` every service it can route to
+directly, plus `app`, being healthy first; `nginx` then only needs to wait on `api-gateway`.
+Several more Tier 0 services (`job-service`, `candidate-core-service`,
+`matching-decision-service`, `role-intelligence-service`, `career-intelligence-service`,
+`dynamic-weighting-service`, `matching-reasoning-service`, `matching-bge-shadow-service`,
+`tenant-directory-service`) run in Compose and receive live dual-written data, but are not yet in
+the Gateway's routing table - they're validated and ready, not yet cut over to real traffic (see
+each service's own README for its specific reason).
+
 ## 5. Nginx
 
 Config lives in `nginx/nginx.conf` (global settings: gzip, log format, rate-limit zone) and
-`nginx/conf.d/tejoma.conf` (server blocks). It is a **pure reverse proxy** to the `app` service -
-no API routes are changed or duplicated in Nginx, since Node already serves both the built SPA
-and `/api/*` from one process.
+`nginx/conf.d/tejoma.conf` (server blocks). It reverse-proxies to `api-gateway` (the
+`tejoma_gateway` upstream) - no location block changed to make this happen, since the Gateway's
+own strangler-fig fallback preserves the exact same "everything reaches something that responds"
+behavior Nginx→`app` always had. No API routes are duplicated in Nginx itself.
 
 Notable behavior:
 - Port 80 redirects everything to HTTPS except `/.well-known/acme-challenge/` (needed for the
@@ -152,7 +169,9 @@ are gitignored, regenerated locally or by certbot.
   `/nginx-health` (doesn't depend on the app being reachable, so Nginx can report its own health
   independently).
 - `depends_on: condition: service_healthy` chains startup ordering: `app` waits for both Python
-  services to be healthy; `nginx` waits for `app`.
+  services to be healthy; each Tier 0 service that calls `app` directly (`MONOLITH_INTERNAL_URL`)
+  waits for `app`; `api-gateway` waits for `app` and every service in its own routing table;
+  `nginx` waits for `api-gateway` (see §4's "Updated by the full-migration cutover" note).
 
 ## 8. Restart & Recovery
 

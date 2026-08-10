@@ -1,0 +1,28 @@
+Senior Backend Engineer
+
+We are a fast-growing fintech company revolutionizing digital payments across India. We are
+looking for a Senior Backend Engineer to join our Platform Engineering department.
+
+Required Skills:
+5-8 Years of experience with Node.js, Java (Core Java), and PostgreSQL.
+Strong knowledge of Spring Boot, MS SQL, and Kubernetes (K8s).
+Experience with AWS, Docker, and REST API design.
+B.Tech or M.Tech in Computer Science required.
+PMP certification is a plus.
+
+Nice to Have:
+Experience with GraphQL and MongoDB.
+Familiarity with Terraform.
+
+Responsibilities:
+- Design and build scalable backend services
+- Collaborate with product and design teams
+- Mentor junior engineers
+- Participate in on-call rotation
+
+Location: Bangalore / Hybrid
+Employment Type: Full-time
+Notice Period: 30 days
+Openings: 3
+Salary: 18-25 LPA
+Languages: English, Hindi preferred.

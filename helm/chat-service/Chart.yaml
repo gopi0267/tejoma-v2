@@ -1,0 +1,6 @@
+apiVersion: v2
+name: chat-service
+description: Tejoma Chat Service - Tier 0 (Batch 17). Owns the RAG chatbot's knowledge base and the recruiter-facing /api/chat + /api/chat/reindex endpoints.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

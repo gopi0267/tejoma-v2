@@ -20,7 +20,7 @@
 import { Queue, Worker } from 'bullmq';
 import Redis from 'ioredis';
 import { logger } from '../utils/logger.js';
-import { trainModelOnStartup } from '../services.js';
+import { trainModelOnStartup } from '../matching/services.js';
 
 const REDIS_HOST = process.env.REDIS_HOST || '127.0.0.1';
 const REDIS_PORT = parseInt(process.env.REDIS_PORT || '6379', 10);

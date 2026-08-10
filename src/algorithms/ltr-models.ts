@@ -9,7 +9,7 @@
  * different request/response shapes (grouped-by-job with graded relevance, vs flat accept/
  * reject), different endpoints (/train/ranking, /predict/ranking/batch vs /train,
  * /predict/batch), and a different, isolated caller (src/matching/learningToRank.ts) - never
- * called by src/services.ts or src/matching/matchingApi.ts's live scoring.
+ * called by src/matching/services.ts or src/matching/matchingApi.ts's live scoring.
  */
 import { logger } from '../utils/logger.js';
 

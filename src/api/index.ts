@@ -1,12 +1,10 @@
 import { Express } from 'express';
 import healthRouter from './health.routes.js';
 import authRouter from './auth.routes.js';
-import candidateRouter from './candidate.routes.js';
 import jobRouter from './job.routes.js';
 import swipeRouter from './swipe.routes.js';
 import analyticsRouter from './analytics.routes.js';
 import mlRouter from './ml.routes.js';
-import uploadRouter from './upload.routes.js';
 import chatRouter from './chat.routes.js';
 import jdParserRouter from './jd-parser.routes.js';
 import recruiterReviewRouter from './recruiter-review.routes.js';
@@ -24,7 +22,6 @@ import recruiterNotificationsRouter from './recruiter-notifications.routes.js';
 import candidateApplicationsRouter from './candidate-applications.routes.js';
 import candidateAnalyticsRouter from './candidate-analytics.routes.js';
 import candidateSearchRouter from './candidate-search.routes.js';
-import skillIntelligenceRouter from './skill-intelligence.routes.js';
 
 export function registerApiRoutes(app: Express) {
     app.use('/api', healthRouter);
@@ -36,8 +33,8 @@ export function registerApiRoutes(app: Express) {
     // sub-path. companyRequestsRouter's POST /company-registration is deliberately public, so
     // it has to be reached before any of those blanket auth gates short-circuit the request.
     app.use('/api', companyRequestsRouter);
-    // Same reasoning applies to every candidate-facing router: candidateRouter, jobRouter, and
-    // uploadRouter below each apply `router.use(requireAuth, requireRole('recruiter', 'admin'))`
+    // Same reasoning applies to every candidate-facing router and jobRouter below - they each
+    // apply `router.use(requireAuth, requireRole('recruiter', 'admin'))` to all sub-paths
     // unconditionally, which would 401 every /api/candidate-*/* request (a candidate never holds
     // a staff access_token cookie) before it ever reached these routers, even though each one is
     // already self-gated by requireCandidateAuth per-route. All must be mounted first.
@@ -50,18 +47,15 @@ export function registerApiRoutes(app: Express) {
     app.use('/api', candidateNotificationsRouter);
     app.use('/api', candidateApplicationsRouter);
     app.use('/api', candidateAnalyticsRouter);
-    app.use('/api', candidateRouter);
     app.use('/api', jobRouter);
     app.use('/api', swipeRouter);
     app.use('/api', analyticsRouter);
     app.use('/api', mlRouter);
-    app.use('/api', uploadRouter);
     app.use('/api', chatRouter);
     app.use('/api', jdParserRouter);
     app.use('/api', recruiterReviewRouter);
     app.use('/api', recruiterMatchesRouter);
     app.use('/api', recruiterNotificationsRouter);
     app.use('/api', candidateSearchRouter);
-    app.use('/api', skillIntelligenceRouter);
     app.use('/api', usersRouter);
 }

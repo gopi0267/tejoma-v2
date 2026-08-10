@@ -1,0 +1,87 @@
+# Default values for matching-scoring-service. See helm/identity-service/values.yaml's header
+# comment for the two supported ways to supply secrets - identical pattern, applied here.
+#
+# JWT_SECRET: this service now has a real, gateway-routed, staff-facing HTTP surface (the ML admin
+# remainder - /api/ml/config, /api/ml/train, /api/ml/model/status, /api/ml/model/versions) -
+# verifies the exact staff token the monolith issues today. Its /internal/* surface remains
+# network-boundary-trusted, no auth.
+
+replicaCount: 2
+
+image:
+  repository: ""  # e.g. <account-id>.dkr.ecr.ap-south-1.amazonaws.com/tejoma-matching-scoring-service
+  tag: ""
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 4021
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+
+probes:
+  liveness:
+    path: /live
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+  readiness:
+    path: /ready
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+terminationGracePeriodSeconds: 30
+preStopSleepSeconds: 5
+
+config:
+  NODE_ENV: production
+  LOG_LEVEL: info
+  DB_HOST: ""
+  DB_PORT: "5432"
+  DB_NAME: tejoma_matching_scoring
+  DB_USER: matching_scoring_service
+  FRONTEND_URL: ""
+  # The shared RandomForest/XGBoost/LightGBM ensemble (python-services/matching-ml-service),
+  # called directly by this service's own ported algorithms/ml-models.ts. Gracefully degrades to
+  # the heuristic feature_score when unreachable (getEnsembleHealth returns null).
+  MATCHING_ML_SERVICE_URL: ""
+  # Required for the ML admin surface - activeModelType/trainModelOnStartup remain monolith-owned
+  # state; this service's /api/ml/* routes are thin proxies to it. See config/env.ts's header comment.
+  MONOLITH_INTERNAL_URL: ""
+
+existingSecret: ""
+secrets:
+  DB_PASSWORD: ""
+  # Same value as the monolith's own JWT_SECRET - this service verifies the exact staff token the
+  # monolith issues today, not a JWKS-based one. Must match exactly, or every request will 401.
+  JWT_SECRET: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "4021"
+  prometheus.io/path: /metrics
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

@@ -1,0 +1,12 @@
+platform-governance-service ({{ .Chart.AppVersion }}) deployed as {{ include "platform-governance-service.fullname" . }}.
+
+Check rollout status:
+  kubectl rollout status deployment/{{ include "platform-governance-service.fullname" . }} -n {{ .Release.Namespace }}
+
+Check health:
+  kubectl port-forward svc/{{ include "platform-governance-service.fullname" . }} 4002:{{ .Values.service.port }} -n {{ .Release.Namespace }}
+  curl http://localhost:4002/health
+
+Reminder: this chart does NOT run database migrations. Before the first deploy to a new
+environment, run platform-governance-service/scripts/migrate.ts (and validate-schema.ts) against the target
+database out-of-band - see platform-governance-service/README.md.

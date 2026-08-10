@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { db } from '../db.js';
 import { requireCandidateAuth } from '../middleware/auth.middleware.js';
-import { computeMatchFeatures, computeFeatureScore } from '../services.js';
+import { computeMatchFeatures, computeFeatureScore } from '../matching/services.js';
 import { resolveCandidateSalaryExpectation } from '../matching/parseCandidateFields.js';
 import type { Job, Candidate, CandidateAccount } from '../types.js';
 
@@ -64,10 +64,11 @@ function fillTrendGaps(series: { date: string; count: number }[], days: number):
   return out;
 }
 
-router.get('/candidate-analytics', requireCandidateAuth, async (req, res) => {
-  try {
-    const candidateId = req.candidate!.candidate_id;
-
+// Extracted so Candidate Service's internal write/read proxy
+// (src/api/candidate-internal.routes.ts's new /analytics endpoint, remaining-monolith migration
+// Step 3c) can call the exact same computation without duplicating it - this handler below is now
+// a thin wrapper, unchanged behavior.
+export async function computeCandidateAnalytics(candidateId: number): Promise<Record<string, unknown> | null> {
     const [account, likedJobs, reviewStats, profileViewCount, applicationStatusCounts, trend30] = await Promise.all([
       db.getCandidateAccountById(candidateId),
       db.getCandidateLikedJobsForAnalytics(candidateId),
@@ -78,7 +79,7 @@ router.get('/candidate-analytics', requireCandidateAuth, async (req, res) => {
     ]);
 
     if (!account) {
-      return res.status(404).json({ error: 'Candidate not found' });
+      return null;
     }
 
     const syntheticCandidate = toSyntheticCandidate(account);
@@ -222,7 +223,7 @@ router.get('/candidate-analytics', requireCandidateAuth, async (req, res) => {
       interviewProbability = Math.round(averageMatchScore * 0.6);
     }
 
-    res.json({
+    return {
       averageMatchScore,
       matchDistribution,
       totalLikedJobsScored: scoredJobs.length,
@@ -245,7 +246,17 @@ router.get('/candidate-analytics', requireCandidateAuth, async (req, res) => {
       insights,
       interviewProbability,
       interviewProbabilityIsHeuristic: true,
-    });
+    };
+}
+
+router.get('/candidate-analytics', requireCandidateAuth, async (req, res) => {
+  try {
+    const candidateId = req.candidate!.candidate_id;
+    const analytics = await computeCandidateAnalytics(candidateId);
+    if (!analytics) {
+      return res.status(404).json({ error: 'Candidate not found' });
+    }
+    res.json(analytics);
   } catch (error) {
     console.error('Candidate analytics error:', error);
     res.status(500).json({ error: 'Failed to load analytics' });

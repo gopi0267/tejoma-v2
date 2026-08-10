@@ -1,8 +1,13 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { db } from '../db.js';
-import { calculateMatchScore } from '../services.js';
 import { generateRubricReport } from '../rubric-scoring.service.js';
+import { computeMatchExplanation } from '../matching/explainability/computeExplanation.js';
+import { scoreCandidateForJob } from '../matching/matchingApi.js';
+// Tier 0 migration (Batch 31) - see src/matchingEvaluationServiceShadow.ts's header comment.
+// Drop-in replacement for matching/shadowScoring.ts's own export: same real local computation,
+// plus an optional shadow comparison (SHADOW_MATCHING_EVALUATION_ENABLED, off by default).
+import { logShadowScoresInBackground } from '../matchingEvaluationServiceShadow.js';
 import { broadcastEvent } from '../realtime.js';
 import { requireAuth, requireRole } from '../middleware/auth.middleware.js';
 
@@ -26,6 +31,54 @@ const listQuerySchema = z.object({
   sortBy: z.enum(['latest_decision', 'oldest_decision', 'highest_score', 'lowest_score', 'name_asc', 'name_desc']).optional(),
 });
 
+// Remaining-monolith migration, Step 6 - extracted (not behavior-changed) so
+// matching-decision-internal.routes.ts can call the exact same logic the public route below
+// always has.
+export async function getRecruiterReviewListWithStats(companyId: number, q: z.infer<typeof listQuerySchema>) {
+  const [{ rows, totalRecords }, stats] = await Promise.all([
+    db.getRecruiterReviewList(companyId, {
+      search: q.search,
+      jobId: q.jobId,
+      decision: q.decision,
+      recruiterId: q.recruiterId,
+      dateFrom: q.dateFrom,
+      dateTo: q.dateTo,
+      minExperience: q.minExperience,
+      maxExperience: q.maxExperience,
+      skills: q.skills ? q.skills.split(',').map((s) => s.trim()).filter(Boolean) : undefined,
+      minScore: q.minScore,
+      maxScore: q.maxScore,
+      sortBy: q.sortBy,
+      page: q.page,
+      pageSize: q.pageSize,
+    }),
+    db.getRecruiterReviewStats(companyId),
+  ]);
+
+  const acceptanceRate = stats.totalReviewed > 0 ? Number(((stats.accepted / stats.totalReviewed) * 100).toFixed(1)) : 0;
+  const rejectionRate = stats.totalReviewed > 0 ? Number(((stats.rejected / stats.totalReviewed) * 100).toFixed(1)) : 0;
+
+  return {
+    data: rows,
+    page: q.page,
+    pageSize: q.pageSize,
+    totalRecords,
+    totalPages: Math.max(1, Math.ceil(totalRecords / q.pageSize)),
+    stats: {
+      totalReviewed: stats.totalReviewed,
+      accepted: stats.accepted,
+      rejected: stats.rejected,
+      saved: stats.saved,
+      acceptanceRate,
+      rejectionRate,
+      avgMatchScore: stats.avgMatchScore,
+      today: stats.today,
+      thisWeek: stats.thisWeek,
+      thisMonth: stats.thisMonth,
+    },
+  };
+}
+
 // GET /api/recruiter-review - paginated, filtered, searched, sorted latest-decision list, plus
 // company-wide summary stats for the dashboard cards (unfiltered - matches the existing
 // Analytics.tsx convention of summary cards reflecting the whole dataset, not the current filter).
@@ -35,56 +88,35 @@ router.get('/recruiter-review', async (req, res) => {
     if (!parsed.success) {
       return res.status(422).json({ error: 'Invalid query parameters', details: parsed.error.flatten() });
     }
-    const q = parsed.data;
     const companyId = req.user!.company_id;
-
-    const [{ rows, totalRecords }, stats] = await Promise.all([
-      db.getRecruiterReviewList(companyId, {
-        search: q.search,
-        jobId: q.jobId,
-        decision: q.decision,
-        recruiterId: q.recruiterId,
-        dateFrom: q.dateFrom,
-        dateTo: q.dateTo,
-        minExperience: q.minExperience,
-        maxExperience: q.maxExperience,
-        skills: q.skills ? q.skills.split(',').map((s) => s.trim()).filter(Boolean) : undefined,
-        minScore: q.minScore,
-        maxScore: q.maxScore,
-        sortBy: q.sortBy,
-        page: q.page,
-        pageSize: q.pageSize,
-      }),
-      db.getRecruiterReviewStats(companyId),
-    ]);
-
-    const acceptanceRate = stats.totalReviewed > 0 ? Number(((stats.accepted / stats.totalReviewed) * 100).toFixed(1)) : 0;
-    const rejectionRate = stats.totalReviewed > 0 ? Number(((stats.rejected / stats.totalReviewed) * 100).toFixed(1)) : 0;
-
-    res.json({
-      data: rows,
-      page: q.page,
-      pageSize: q.pageSize,
-      totalRecords,
-      totalPages: Math.max(1, Math.ceil(totalRecords / q.pageSize)),
-      stats: {
-        totalReviewed: stats.totalReviewed,
-        accepted: stats.accepted,
-        rejected: stats.rejected,
-        saved: stats.saved,
-        acceptanceRate,
-        rejectionRate,
-        avgMatchScore: stats.avgMatchScore,
-        today: stats.today,
-        thisWeek: stats.thisWeek,
-        thisMonth: stats.thisMonth,
-      },
-    });
+    res.json(await getRecruiterReviewListWithStats(companyId, parsed.data));
   } catch (error: any) {
     console.error('Failed to load recruiter review list:', error);
     res.status(500).json({ error: 'Failed to load recruiter review list: ' + error.message });
   }
 });
+
+// Remaining-monolith migration, Step 6 - extracted, unchanged.
+export async function getRecruiterReviewDetailWithExplanation(candidateId: number, jobId: number, companyId: number) {
+  const [detail, savedReport] = await Promise.all([
+    db.getRecruiterReviewDetail(candidateId, jobId, companyId),
+    db.getDetailedScoringReport(companyId, candidateId, jobId),
+  ]);
+  if (!detail) return null;
+  // Enterprise AI Matching Architecture, Phase 10 - Explainability Layer: unlike the Gemini
+  // rubric report below (explicit-trigger, cached), this is deterministic and cheap (no LLM
+  // call - just a couple of indexed reads plus template functions), so it's safe to compute on
+  // every detail view rather than gating it behind its own button. Never blocks/fails the
+  // response - a candidate/job pair with no reasoning or career data yet still gets a valid,
+  // if sparser, explanation.
+  const explanation = await computeMatchExplanation(detail.candidate!, detail.job!, detail.history).catch((err) => {
+    console.error('Failed to compute match explanation:', err);
+    return null;
+  });
+  // Previously generated rubric report, if any - shown immediately with no new Gemini call.
+  // Only generated on an explicit POST .../detailed-score click (see below), never implicitly.
+  return { ...detail, detailedScore: savedReport?.report ?? null, detailedScoreGeneratedAt: savedReport?.generated_at ?? null, explanation };
+}
 
 // GET /api/recruiter-review/:candidateId/:jobId - full detail for the drawer/modal.
 router.get('/recruiter-review/:candidateId/:jobId', async (req, res) => {
@@ -96,16 +128,11 @@ router.get('/recruiter-review/:candidateId/:jobId', async (req, res) => {
       return res.status(400).json({ error: 'Invalid candidate or job ID' });
     }
 
-    const [detail, savedReport] = await Promise.all([
-      db.getRecruiterReviewDetail(candidateId, jobId, companyId),
-      db.getDetailedScoringReport(companyId, candidateId, jobId),
-    ]);
-    if (!detail) {
+    const result = await getRecruiterReviewDetailWithExplanation(candidateId, jobId, companyId);
+    if (!result) {
       return res.status(404).json({ error: 'Candidate or job not found' });
     }
-    // Previously generated rubric report, if any - shown immediately with no new Gemini call.
-    // Only generated on an explicit POST .../detailed-score click (see below), never implicitly.
-    res.json({ ...detail, detailedScore: savedReport?.report ?? null, detailedScoreGeneratedAt: savedReport?.generated_at ?? null });
+    res.json(result);
   } catch (error: any) {
     console.error('Failed to load recruiter review detail:', error);
     res.status(500).json({ error: 'Failed to load recruiter review detail: ' + error.message });
@@ -115,6 +142,21 @@ router.get('/recruiter-review/:candidateId/:jobId', async (req, res) => {
 const notesSchema = z.object({
   note: z.string().trim().min(1).max(5000),
 });
+
+// Remaining-monolith migration, Step 6 - extracted, unchanged.
+export async function upsertRecruiterNoteForSwipe(id: number, companyId: number, note: string, userId: number) {
+  const swipe = await db.getSwipeById(id, companyId);
+  if (!swipe) return 'not_found' as const;
+
+  const saved = await db.upsertRecruiterNote({
+    companyId,
+    candidateId: swipe.candidate_id,
+    jobId: swipe.job_id,
+    note,
+    userId,
+  });
+  return saved ?? ('save_failed' as const);
+}
 
 // POST /api/recruiter-review/:id/notes - :id is the swipe id shown in the main list row
 // (the latest decision for that candidate+job pair). Upserts one note per pair per tenant.
@@ -131,27 +173,32 @@ router.post('/recruiter-review/:id/notes', async (req, res) => {
       return res.status(422).json({ error: 'Invalid note', details: parsed.error.flatten() });
     }
 
-    const swipe = await db.getSwipeById(id, companyId);
-    if (!swipe) {
+    const result = await upsertRecruiterNoteForSwipe(id, companyId, parsed.data.note, req.user!.user_id);
+    if (result === 'not_found') {
       return res.status(404).json({ error: 'Decision not found' });
     }
-
-    const note = await db.upsertRecruiterNote({
-      companyId,
-      candidateId: swipe.candidate_id,
-      jobId: swipe.job_id,
-      note: parsed.data.note,
-      userId: req.user!.user_id,
-    });
-    if (!note) {
+    if (result === 'save_failed') {
       return res.status(500).json({ error: 'Failed to save note' });
     }
-    res.json(note);
+    res.json(result);
   } catch (error: any) {
     console.error('Failed to save recruiter note:', error);
     res.status(500).json({ error: 'Failed to save recruiter note: ' + error.message });
   }
 });
+
+// Remaining-monolith migration, Step 6 - extracted, unchanged.
+export async function generateAndSaveDetailedScore(candidateId: number, jobId: number, companyId: number, generatedBy: number) {
+  const candidate = await db.getCandidateById(candidateId, companyId);
+  const job = await db.getJobById(jobId, companyId);
+  if (!candidate || !job) return 'not_found' as const;
+
+  const report = await generateRubricReport(job, candidate);
+  const saved = await db.upsertDetailedScoringReport({ companyId, candidateId, jobId, report, generatedBy });
+  if (!saved) return 'save_failed' as const;
+
+  return { detailedScore: saved.report, detailedScoreGeneratedAt: saved.generated_at };
+}
 
 // POST /api/recruiter-review/:candidateId/:jobId/detailed-score - generates a fresh rubric
 // report via Gemini (src/rubric-scoring.service.ts), independent of the real matching engine,
@@ -166,21 +213,14 @@ router.post('/recruiter-review/:candidateId/:jobId/detailed-score', async (req, 
       return res.status(400).json({ error: 'Invalid candidate or job ID' });
     }
 
-    const candidate = await db.getCandidateById(candidateId, companyId);
-    const job = await db.getJobById(jobId, companyId);
-    if (!candidate || !job) {
+    const result = await generateAndSaveDetailedScore(candidateId, jobId, companyId, req.user!.user_id);
+    if (result === 'not_found') {
       return res.status(404).json({ error: 'Candidate or job not found' });
     }
-
-    const report = await generateRubricReport(job, candidate);
-    const saved = await db.upsertDetailedScoringReport({
-      companyId, candidateId, jobId, report, generatedBy: req.user!.user_id,
-    });
-    if (!saved) {
+    if (result === 'save_failed') {
       return res.status(500).json({ error: 'Failed to save the detailed scoring report' });
     }
-
-    res.json({ detailedScore: saved.report, detailedScoreGeneratedAt: saved.generated_at });
+    res.json(result);
   } catch (error: any) {
     console.error('Failed to generate detailed scoring report:', error);
     res.status(500).json({ error: 'Failed to generate detailed scoring report: ' + error.message });
@@ -191,6 +231,53 @@ const decisionSchema = z.object({
   action: z.enum(['accepted', 'rejected', 'saved']),
   reason: z.string().trim().max(1000).optional(),
 });
+
+// Remaining-monolith migration, Step 6 - extracted, unchanged.
+export async function changeRecruiterReviewDecision(
+  id: number,
+  companyId: number,
+  userId: number,
+  action: 'accepted' | 'rejected' | 'saved',
+  reason: string | undefined
+) {
+  const existingSwipe = await db.getSwipeById(id, companyId);
+  if (!existingSwipe) return 'decision_not_found' as const;
+
+  const candidate = await db.getCandidateById(existingSwipe.candidate_id, companyId);
+  const job = await db.getJobById(existingSwipe.job_id, companyId);
+  if (!candidate || !job) return 'candidate_or_job_not_found' as const;
+
+  // Reuses the existing, untouched AI Matching Engine - same function POST /swipes calls -
+  // so the new decision carries a fresh, current score rather than the (possibly stale) one
+  // from the original swipe.
+  const scoreData = await scoreCandidateForJob(job, candidate, { skipGeminiSummary: true });
+  const actionValue = action === 'accepted' ? 1 : action === 'rejected' ? 0 : 0.5;
+
+  const newSwipe = await db.recordSwipe({
+    company_id: companyId,
+    recruiter_id: userId,
+    candidate_id: existingSwipe.candidate_id,
+    job_id: existingSwipe.job_id,
+    action: actionValue,
+    match_score: scoreData.final_score,
+    used_for_training: false,
+    reason: reason ?? null,
+    breakdown: scoreData.breakdown,
+  });
+  if (!newSwipe) return 'save_failed' as const;
+
+  // Enterprise AI Matching Architecture, Phase 11 - Proficiency Weighting, SHADOW MODE ONLY.
+  // See the POST /swipes handler's identical call for the full note.
+  logShadowScoresInBackground(companyId, candidate, job, scoreData.breakdown.skills.matched, scoreData.final_score, actionValue);
+
+  broadcastEvent('recruiter-review-decision-changed', {
+    candidate_id: existingSwipe.candidate_id,
+    job_id: existingSwipe.job_id,
+    action: actionValue,
+  });
+
+  return newSwipe;
+}
 
 // PATCH /api/recruiter-review/:id/decision - :id is again the swipe id of the current latest
 // decision for a pair. Records a brand NEW swipe row (never updates/deletes the old one) so the
@@ -209,45 +296,17 @@ router.patch('/recruiter-review/:id/decision', async (req, res) => {
       return res.status(422).json({ error: 'Invalid decision payload', details: parsed.error.flatten() });
     }
 
-    const existingSwipe = await db.getSwipeById(id, companyId);
-    if (!existingSwipe) {
+    const result = await changeRecruiterReviewDecision(id, companyId, req.user!.user_id, parsed.data.action, parsed.data.reason);
+    if (result === 'decision_not_found') {
       return res.status(404).json({ error: 'Decision not found' });
     }
-
-    const candidate = await db.getCandidateById(existingSwipe.candidate_id, companyId);
-    const job = await db.getJobById(existingSwipe.job_id, companyId);
-    if (!candidate || !job) {
+    if (result === 'candidate_or_job_not_found') {
       return res.status(404).json({ error: 'Candidate or job no longer exists' });
     }
-
-    // Reuses the existing, untouched AI Matching Engine - same function POST /swipes calls -
-    // so the new decision carries a fresh, current score rather than the (possibly stale) one
-    // from the original swipe.
-    const scoreData = await calculateMatchScore(job, candidate, { skipGeminiSummary: true });
-    const actionValue = parsed.data.action === 'accepted' ? 1 : parsed.data.action === 'rejected' ? 0 : 0.5;
-
-    const newSwipe = await db.recordSwipe({
-      company_id: companyId,
-      recruiter_id: req.user!.user_id,
-      candidate_id: existingSwipe.candidate_id,
-      job_id: existingSwipe.job_id,
-      action: actionValue,
-      match_score: scoreData.final_score,
-      used_for_training: false,
-      reason: parsed.data.reason ?? null,
-      breakdown: scoreData.breakdown,
-    });
-    if (!newSwipe) {
+    if (result === 'save_failed') {
       return res.status(500).json({ error: 'Failed to record decision change' });
     }
-
-    broadcastEvent('recruiter-review-decision-changed', {
-      candidate_id: existingSwipe.candidate_id,
-      job_id: existingSwipe.job_id,
-      action: actionValue,
-    });
-
-    res.json(newSwipe);
+    res.json(result);
   } catch (error: any) {
     console.error('Failed to change decision:', error);
     res.status(500).json({ error: 'Failed to change decision: ' + error.message });

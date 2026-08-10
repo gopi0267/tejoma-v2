@@ -1,0 +1,12 @@
+analytics-service ({{ .Chart.AppVersion }}) deployed as {{ include "analytics-service.fullname" . }}.
+
+Check rollout status:
+  kubectl rollout status deployment/{{ include "analytics-service.fullname" . }} -n {{ .Release.Namespace }}
+
+Check health:
+  kubectl port-forward svc/{{ include "analytics-service.fullname" . }} 4010:{{ .Values.service.port }} -n {{ .Release.Namespace }}
+  curl http://localhost:4010/health
+
+This service owns no database - nothing to migrate/backfill before first deploy. Confirm
+JWT_SECRET matches the monolith's own exactly (401s otherwise) and MONOLITH_INTERNAL_URL is
+reachable - every route this service exposes proxies there, with no fallback path of its own.

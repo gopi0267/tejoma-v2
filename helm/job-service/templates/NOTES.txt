@@ -1,0 +1,18 @@
+job-service ({{ .Chart.AppVersion }}) deployed as {{ include "job-service.fullname" . }}.
+
+Check rollout status:
+  kubectl rollout status deployment/{{ include "job-service.fullname" . }} -n {{ .Release.Namespace }}
+
+Check health:
+  kubectl port-forward svc/{{ include "job-service.fullname" . }} 4018:{{ .Values.service.port }} -n {{ .Release.Namespace }}
+  curl http://localhost:4018/health
+
+Reminder: this chart does NOT run database migrations. Before the first deploy to a new
+environment, run job-service/scripts/migrate.ts (and validate-schema.ts) against the
+target database out-of-band, then scripts/backfill-job-service.ts from the monolith
+- see job-service/README.md and MIGRATION_RUNBOOK.md.
+
+This service has no gateway route yet. It receives a live dual-written copy of every jobs row on
+create/update/delete (see src/dualWrite.ts's upsertJob/patchJob/deleteJobMirror, gated behind
+DUAL_WRITE_ENABLED, off by default). Its own GET /internal/jobs and /internal/jobs/:id are real and
+ready for a future caller once cut over.

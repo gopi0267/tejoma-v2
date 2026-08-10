@@ -3,7 +3,7 @@
 // Builds and seeds a real skill graph (skill_nodes / skill_edges - see
 // migration-phase1-intelligence-layer.sql) from the JD parser's existing skills dictionary
 // (src/jd-parser/dictionaries/skills.dictionary.ts, unmodified). Nothing here is read by
-// src/services.ts's live scoring yet - that wiring is Phase 2 work. This module only builds and
+// src/matching/services.ts's live scoring yet - that wiring is Phase 2 work. This module only builds and
 // populates the foundation, and exposes canonicalizeSkill() as the primitive future phases will
 // call.
 //

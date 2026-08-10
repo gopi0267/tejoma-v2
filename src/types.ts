@@ -175,7 +175,7 @@ export interface Candidate {
   resume_file_path?: string;
   candidate_hash?: string;
   resume_embedding?: number[];
-  // Enterprise AI Matching Architecture, Phase 1 - additive, not yet read by src/services.ts's
+  // Enterprise AI Matching Architecture, Phase 1 - additive, not yet read by src/matching/services.ts's
   // scoring. confidence_profile is computed by src/matching/confidenceService.ts at creation
   // time from already-parsed data (parser.service.ts itself is untouched). The three *_embedding
   // fields are precomputed alongside resume_embedding above (untouched) by
@@ -263,7 +263,7 @@ export interface Job {
 
 // Enterprise AI Matching Architecture, Phase 1 - Skill Intelligence Platform. One row per
 // canonical skill, seeded from src/jd-parser/dictionaries/skills.dictionary.ts. Not yet read by
-// src/services.ts's live scoring (Phase 2 work) - see src/matching/skillIntelligence.ts.
+// src/matching/services.ts's live scoring (Phase 2 work) - see src/matching/skillIntelligence.ts.
 export interface SkillNode {
   id: number;
   canonical_name: string;
@@ -675,5 +675,232 @@ export interface DraftConclusion {
   conclusion_confidence: number;
   confidence_derivation: string;
   derived_from: string;
+}
+
+// ============================================================================
+// Enterprise AI Matching Architecture, Phase 10 - Explainability Layer. Wires §5.1 Reasoning
+// Conclusions (Phase 9) + §2.4 Career Intelligence (Phase 8) + the existing Dynamic Weighting
+// MatchBreakdown into human-readable match narratives - see
+// src/matching/explainability/computeExplanation.ts's module doc for the full scope note,
+// including why this is computed live (no cache table) and why the candidate-facing surface is
+// narrower than the recruiter-facing one.
+// ============================================================================
+
+export interface SkillsNarrative {
+  score: number | null;
+  explanation: string;
+  matched: string[];
+  missing: string[];
+  proficiency: Array<{ skill: string; tier: 'beginner' | 'intermediate' | 'advanced' | 'expert'; confidence: number }>;
+}
+
+export interface SeniorityNarrative {
+  candidateLevel: SeniorityLevel | null;
+  candidateLevelConfidence: number | null;
+  jobLevel: SeniorityLevel | null;
+  jobLevelConfidence: number | null;
+  alignment: 'exact_match' | 'candidate_more_senior' | 'candidate_less_senior' | 'unknown';
+  explanation: string;
+}
+
+export interface CareerProgressionNarrative {
+  progressionType: ProgressionType | null;
+  seniorityTrend: SeniorityTrend | null;
+  explanation: string;
+}
+
+export interface TechnologyCoherenceNarrative {
+  coherenceScore: number | null;
+  explanation: string;
+  reasoningConclusionId: number | null;
+}
+
+export interface InferredCompetencyNarrative {
+  conclusionText: string;
+  reasoningType: ReasoningType;
+  confidence: number;
+  reasoningConclusionId: number;
+}
+
+export interface ConcernNarrative {
+  concernType: 'skill_gap' | 'career_gap' | 'seniority_mismatch';
+  description: string;
+  evidence: string;
+  impact: string;
+}
+
+// Named MatchNarrative, not MatchExplanation, to avoid colliding with the unrelated, pre-existing
+// src/matching/explainability.ts's own MatchExplanation type (Phase 2 - a narrower, skill-tier-
+// level explanation attached to MatchBreakdown.explanation, opt-in via matchingApi.ts's
+// `weighting: 'dynamic'`, not populated by the default recruiter swipe flow this phase reads
+// from). Same TS-inline-import scoping is why that name and this one don't already conflict at
+// compile time - but reusing the name would still be a real maintenance hazard.
+export interface MatchNarrativeBreakdown {
+  skillsMatch: SkillsNarrative;
+  seniorityAlignment: SeniorityNarrative;
+  careerProgression: CareerProgressionNarrative | null;
+  technologyCoherence: TechnologyCoherenceNarrative | null;
+  inferredCompetencies: InferredCompetencyNarrative[];
+}
+
+export interface MatchNarrative {
+  candidateId: number;
+  jobId: number;
+  matchScore: number | null;
+  matchScoreSource: 'latest_swipe' | 'unavailable';
+  executiveSummary: string;
+  detailedBreakdown: MatchNarrativeBreakdown;
+  concerns: ConcernNarrative[];
+  reasoningConclusionsUsed: number[];
+  generatedAt: string;
+}
+
+// Candidate-facing surface: intentionally narrower than MatchNarrative - see
+// computeExplanation.ts for why (no work_history/project_entries exist on the
+// candidate_accounts-based scoring path, so there is no real career/reasoning-layer data to draw
+// from for a candidate viewing a job before ever becoming a full `candidates` row in that
+// company).
+export interface CandidateMatchNarrative {
+  jobId: number;
+  whyYouMatched: string;
+  yourStrengths: string[];
+  skillsToDevelop: string[];
+  generatedAt: string;
+}
+
+// ============================================================================
+// Enterprise AI Matching Architecture, Phase 11 - Proficiency Weighting, SHADOW MODE ONLY.
+// Computed and logged alongside every real decision for future analysis - never applied to a
+// live match score. See src/matching/proficiencyWeighting.ts's module doc for the full scope
+// note, including why "job expectation" is a flat fallback (no per-skill proficiency
+// expectation data exists anywhere in this schema) and why there is no fairness-audit or A/B
+// testing machinery here (no demographic data, no experimentation infrastructure exists in this
+// codebase - both are real prerequisites the original spec itself required before any live
+// scoring change, not optional extras).
+// ============================================================================
+
+export type ProficiencyTierMatchType = 'exceeds' | 'meets' | 'below';
+
+export interface SkillProficiencyMultiplier {
+  skillName: string;
+  multiplier: number;
+  candidateTier: string;
+  expectedTier: string;
+  matchType: ProficiencyTierMatchType;
+  confidence: number;
+  reasoning: string;
+}
+
+export interface ProficiencyShadowScore {
+  id: number;
+  company_id: number;
+  candidate_id: number;
+  job_id: number;
+  base_match_score: number;
+  proficiency_adjusted_score: number;
+  overall_multiplier: number;
+  skill_multipliers: SkillProficiencyMultiplier[];
+  computed_at: string;
+  // Phase 11B - the recruiter's real decision (0/0.5/1, same encoding as swipes.action) at the
+  // moment this shadow score was computed. Null for any row logged before this column existed.
+  decision_action: number | null;
+  // Phase 12 - career trajectory multiplier, chained on top of proficiency_adjusted_score. All
+  // null when the candidate has no computed career_trajectories row yet.
+  career_multiplier: number | null;
+  career_progression_signal: number | null;
+  career_stability_signal: number | null;
+  career_domain_signal: number | null;
+  career_adjusted_score: number | null;
+  career_progression_type: ProgressionType | null;
+  // Phase 13 - skill recency multiplier, chained on top of career_adjusted_score. All null when
+  // no matched skill has resolvable recency data.
+  recency_multiplier: number | null;
+  recency_adjusted_score: number | null;
+  recency_role_expectation: RoleRecencyExpectation | null;
+  recency_skill_multipliers: SkillRecencyMultiplier[] | null;
+  // Phase 15 - reasoning-conclusions alignment multiplier, chained on top of
+  // recency_adjusted_score. All null when the candidate has no reasoning_conclusions rows.
+  reasoning_multiplier: number | null;
+  reasoning_adjusted_score: number | null;
+  reasoning_coverage_signal: number | null;
+}
+
+// ============================================================================
+// Enterprise AI Matching Architecture, Phase 12 - Career Trajectory Weighting, SHADOW MODE ONLY.
+// Same discipline as Phase 11's ProficiencyShadowScore - computed and logged alongside every
+// real decision, never applied to a live match score. See
+// src/matching/careerWeighting.ts's module doc for the full scope note.
+// ============================================================================
+
+export interface CareerMultiplierResult {
+  multiplier: number;
+  progressionSignal: number;
+  stabilitySignal: number;
+  domainSignal: number;
+  confidence: number;
+  reasoning: string;
+}
+
+// ============================================================================
+// Enterprise AI Matching Architecture, Phase 13 - Skill Recency Weighting, SHADOW MODE ONLY.
+// Same discipline as Phases 11/12 - computed and logged alongside every real decision, never
+// applied to a live match score. See src/matching/recencyWeighting.ts's module doc for the full
+// scope note.
+// ============================================================================
+
+export type RoleRecencyExpectation = 'high' | 'medium' | 'low';
+
+export interface SkillRecencyMultiplier {
+  skillName: string;
+  multiplier: number;
+  monthsSinceUse: number | null;
+  skillCategory: string | null;
+  confidence: number;
+  reasoning: string;
+}
+
+// ============================================================================
+// Enterprise AI Matching Architecture, Phase 15 - Reasoning Conclusions Weighting, SHADOW MODE
+// ONLY. Same discipline as Phases 11/12/13. See src/matching/reasoningWeighting.ts's module doc
+// for why this reuses Phase 9's precomputed conclusions instead of re-traversing skill_edges
+// live.
+// ============================================================================
+
+export interface ReasoningMultiplierResult {
+  multiplier: number;
+  densitySignal: number;
+  coverageSignal: number;
+  qualitySignal: number;
+  coveredDomains: string[];
+  uncoveredDomains: string[];
+  confidence: number;
+  reasoning: string;
+}
+
+// ============================================================================
+// BGE-M3 + BGE-Reranker-v2-m3 retrieval shadow comparison, SHADOW MODE ONLY. Never used to rank
+// or select candidates - see src/matching/bgeShadowRetrieval.ts's module doc for the full scope
+// note, including the real CPU latency benchmark that keeps this shadow-only for now.
+// ============================================================================
+
+export interface RankingEntry {
+  candidateId: number;
+  score: number;
+}
+
+export interface BgeRetrievalShadowComparison {
+  id: number;
+  company_id: number;
+  job_id: number;
+  pool_size: number;
+  existing_ranking: RankingEntry[];
+  bge_ranking: RankingEntry[] | null;
+  top10_overlap_count: number | null;
+  top10_overlap_pct: number | null;
+  rank_correlation: number | null;
+  bge_available: boolean;
+  embed_latency_ms: number | null;
+  rerank_latency_ms: number | null;
+  computed_at: string;
 }
 

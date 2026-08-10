@@ -426,6 +426,26 @@ CREATE TABLE IF NOT EXISTS model_versions (
 
 
 -- ============================================================================
+-- Table: matching_model_config
+-- Added by migration-matching-model-config.sql (Microservices Migration, Batch 23 - Matching
+-- Service extraction prep, not a Phase/product feature). Persists which scoring model is active
+-- (previously an in-memory-only `let activeModelType` in src/services.ts, reset to
+-- 'random_forest' on every process restart and unreadable by any other process). A single-row
+-- table (id is CHECK-constrained to 1), not a generic config system - this stores exactly the one
+-- setting that needed to stop being in-memory-only, nothing more.
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS matching_model_config (
+  id                  SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+  active_model_type   VARCHAR(20) NOT NULL DEFAULT 'random_forest'
+                        CHECK (active_model_type IN ('heuristic', 'ml_tree', 'random_forest', 'hybrid_weighted')),
+  updated_at          TIMESTAMP DEFAULT NOW()
+);
+
+INSERT INTO matching_model_config (id, active_model_type) VALUES (1, 'random_forest')
+  ON CONFLICT (id) DO NOTHING;
+
+
+-- ============================================================================
 -- Table 10: refresh_tokens
 -- Created by migration-refresh-tokens.sql. remember column added by migration-remember-flag.sql
 -- (merged into the base definition here).
@@ -1073,6 +1093,81 @@ CREATE TABLE IF NOT EXISTS reasoning_conclusions (
 );
 CREATE INDEX IF NOT EXISTS idx_reasoning_conclusions_subject ON reasoning_conclusions(subject_type, subject_id);
 CREATE INDEX IF NOT EXISTS idx_reasoning_conclusions_type ON reasoning_conclusions(reasoning_type);
+
+
+-- ============================================================================
+-- Enterprise AI Matching Architecture, Phase 11 (architecture doc §2.1 Proficiency Weighting,
+-- SHADOW MODE ONLY). Added by migration-phase11-proficiency-shadow.sql - see that file for full
+-- reasoning, including why this never affects a live match score.
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS proficiency_shadow_scores (
+  id                          SERIAL PRIMARY KEY,
+  company_id                  INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  candidate_id                INTEGER NOT NULL REFERENCES candidates(id) ON DELETE CASCADE,
+  job_id                      INTEGER NOT NULL,
+  base_match_score            NUMERIC NOT NULL,
+  proficiency_adjusted_score  NUMERIC NOT NULL,
+  overall_multiplier          NUMERIC NOT NULL,
+  skill_multipliers           JSONB NOT NULL,
+  computed_at                 TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  -- Phase 11B (migration-phase11b-proficiency-analytics.sql) - the recruiter's real decision at
+  -- the moment this shadow score was computed (0/0.5/1, same encoding as swipes.action). Score
+  -- computation and the decision are the same atomic event here, so this is one denormalized
+  -- column rather than a separate outcome-event table.
+  decision_action              NUMERIC,
+  -- Phase 12 (migration-phase12-career-shadow.sql) - career trajectory multiplier, computed at
+  -- the same decision moment, chained on top of proficiency_adjusted_score. See
+  -- careerWeighting.ts's module doc.
+  career_multiplier            NUMERIC,
+  career_progression_signal    NUMERIC,
+  career_stability_signal      NUMERIC,
+  career_domain_signal         NUMERIC,
+  career_adjusted_score        NUMERIC,
+  career_progression_type      VARCHAR(20),
+  -- Phase 13 (migration-phase13-recency-shadow.sql) - skill recency multiplier, chained on top
+  -- of career_adjusted_score (falling back to proficiency_adjusted_score when no career data
+  -- exists). See recencyWeighting.ts's module doc.
+  recency_multiplier            NUMERIC,
+  recency_adjusted_score        NUMERIC,
+  recency_role_expectation      VARCHAR(10),
+  recency_skill_multipliers     JSONB,
+  -- Phase 15 (migration-phase15-reasoning-shadow.sql) - reasoning-conclusions alignment
+  -- multiplier, chained on top of recency_adjusted_score. See reasoningWeighting.ts's module
+  -- doc, including why this reuses Phase 9's precomputed conclusions rather than re-traversing
+  -- the skill graph live.
+  reasoning_multiplier          NUMERIC,
+  reasoning_density_signal      NUMERIC,
+  reasoning_coverage_signal     NUMERIC,
+  reasoning_quality_signal      NUMERIC,
+  reasoning_adjusted_score      NUMERIC,
+  reasoning_covered_domains     JSONB,
+  reasoning_uncovered_domains   JSONB
+);
+CREATE INDEX IF NOT EXISTS idx_proficiency_shadow_scores_candidate_job ON proficiency_shadow_scores(candidate_id, job_id);
+CREATE INDEX IF NOT EXISTS idx_proficiency_shadow_scores_company ON proficiency_shadow_scores(company_id);
+
+
+-- ============================================================================
+-- BGE-M3 + BGE-Reranker-v2-m3 retrieval shadow comparison (migration-bge-retrieval-shadow.sql).
+-- SHADOW MODE ONLY - see that file and src/matching/bgeShadowRetrieval.ts for full reasoning.
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS bge_retrieval_shadow_comparisons (
+  id                    SERIAL PRIMARY KEY,
+  company_id            INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  job_id                INTEGER NOT NULL,
+  pool_size             INTEGER NOT NULL,
+  existing_ranking      JSONB NOT NULL,
+  bge_ranking           JSONB,
+  top10_overlap_count   INTEGER,
+  top10_overlap_pct     NUMERIC,
+  rank_correlation      NUMERIC,
+  bge_available         BOOLEAN NOT NULL,
+  embed_latency_ms      NUMERIC,
+  rerank_latency_ms     NUMERIC,
+  computed_at           TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_bge_retrieval_shadow_job ON bge_retrieval_shadow_comparisons(job_id);
+CREATE INDEX IF NOT EXISTS idx_bge_retrieval_shadow_company ON bge_retrieval_shadow_comparisons(company_id);
 
 
 -- ============================================================================

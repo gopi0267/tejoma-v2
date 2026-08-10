@@ -1,0 +1,6 @@
+apiVersion: v2
+name: recruiting-service
+description: Tejoma Recruiting Service - Tier 0 (Batch 19). Owns recruiter_notifications; proxies GET /api/matches to the monolith's /internal/recruiting/* API.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

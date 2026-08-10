@@ -1,0 +1,6 @@
+apiVersion: v2
+name: matching-scoring-service
+description: Tejoma Matching Scoring Service - Tier 0 (full-migration continuation, live-scoring-engine extraction). Shadow-validation-only ported copy of the monolith's live match-scoring pipeline (scoring_computations) - never serves real traffic, see the service's own README for why.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

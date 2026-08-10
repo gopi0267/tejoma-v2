@@ -7,7 +7,7 @@
 // matching-ml-service running on :8009 for the full ensemble path - gracefully measures the
 // deterministic-only path if it's not reachable.
 
-import { calculateMatchScoresBatch } from '../src/services.js';
+import { calculateMatchScoresBatch } from '../src/matching/services.js';
 import { db } from '../src/db.js';
 
 function percentile(sorted: number[], p: number): number {

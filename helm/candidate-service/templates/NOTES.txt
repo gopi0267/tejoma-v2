@@ -1,0 +1,16 @@
+candidate-service ({{ .Chart.AppVersion }}) deployed as {{ include "candidate-service.fullname" . }}.
+
+Check rollout status:
+  kubectl rollout status deployment/{{ include "candidate-service.fullname" . }} -n {{ .Release.Namespace }}
+
+Check health:
+  kubectl port-forward svc/{{ include "candidate-service.fullname" . }} 4005:{{ .Values.service.port }} -n {{ .Release.Namespace }}
+  curl http://localhost:4005/health
+
+Reminder: this chart does NOT run database migrations. Before the first deploy to a new
+environment, run candidate-service/scripts/migrate.ts (and validate-schema.ts) against the target
+database out-of-band, then scripts/backfill-candidate-service.ts from the monolith - see
+candidate-service/README.md and MIGRATION_RUNBOOK.md section 6.
+
+Confirm JWT_SECRET matches the monolith's own exactly, or every request will 401 - see
+values.yaml's comment and src/config/env.ts's header comment.

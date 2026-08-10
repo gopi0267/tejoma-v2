@@ -1,0 +1,87 @@
+# Default values for candidate-service. See helm/identity-service/values.yaml's header comment
+# for the two supported ways to supply secrets - identical pattern, applied here.
+
+replicaCount: 2
+
+image:
+  repository: ""  # e.g. <account-id>.dkr.ecr.ap-south-1.amazonaws.com/tejoma-candidate-service
+  tag: ""
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 4005
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+
+probes:
+  liveness:
+    path: /live
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+  readiness:
+    path: /ready
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+terminationGracePeriodSeconds: 30
+preStopSleepSeconds: 5
+
+config:
+  NODE_ENV: production
+  LOG_LEVEL: info
+  DB_HOST: ""
+  DB_PORT: "5432"
+  DB_NAME: tejoma_candidate
+  DB_USER: candidate_service
+  FRONTEND_URL: ""
+  # The monolith's own internal address (e.g. http://monolith.tejoma.svc.cluster.local, or the
+  # EC2 host once it's reachable from the cluster) - required for the proxied routes (jobs,
+  # decisions, applications, matches, and candidate-search's tab/shortlisted). See
+  # src/config/env.ts's header comment.
+  MONOLITH_INTERNAL_URL: ""
+  # Remaining-monolith migration, Step 5 - candidate-search.routes.ts's real cutover needs both:
+  # identity-service for last_active (candidate auth sessions are its domain, not this service's),
+  # matching-scoring-service for heuristic-tier ranking. Both required, same reasoning as
+  # MONOLITH_INTERNAL_URL above.
+  IDENTITY_SERVICE_URL: "http://identity-service.tejoma.svc.cluster.local"
+  MATCHING_SCORING_SERVICE_URL: "http://matching-scoring-service.tejoma.svc.cluster.local"
+
+existingSecret: ""
+secrets:
+  DB_PASSWORD: ""
+  # Same value as the monolith's own JWT_SECRET (config/env.ts's header comment - this service
+  # verifies the exact candidate token the monolith issues today, not a JWKS-based one). Must
+  # match exactly, or every request will 401.
+  JWT_SECRET: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "4005"
+  prometheus.io/path: /metrics
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: job-service
+description: Tejoma Job Service - Tier 0. Gateway-routed, staff-facing (Remaining-monolith migration, Step 4). GET /api/jobs/:id is a real cutover, fusing this service's own DB with candidate-core-service's candidate pool and matching-scoring-service's ranking. List/create/update/delete proxy through to the monolith, which remains the sole writer.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

@@ -1,0 +1,102 @@
+# Default values for api-gateway. Unlike every other Tier 0 chart, there is no secrets.yaml/
+# existingSecret pattern here at all - this service has no database and no credentials of its own
+# (api-gateway/README.md's "no database - the one Tier 0 service that owns no data" note).
+
+replicaCount: 2
+
+image:
+  repository: ""  # e.g. <account-id>.dkr.ecr.ap-south-1.amazonaws.com/tejoma-api-gateway
+  tag: ""
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 4000
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 8
+  targetCPUUtilizationPercentage: 70
+
+probes:
+  liveness:
+    path: /live
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+  readiness:
+    path: /ready
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+terminationGracePeriodSeconds: 30
+preStopSleepSeconds: 5
+
+config:
+  NODE_ENV: production
+  LOG_LEVEL: info
+  FRONTEND_URL: ""
+  # All fifteen required (not graceful-null) - config/env.ts's own fail-fast check: a Gateway that
+  # doesn't know where to send a request has nothing reasonable to fall back to.
+  IDENTITY_SERVICE_URL: "http://identity-service.tejoma.svc.cluster.local"
+  PLATFORM_GOVERNANCE_SERVICE_URL: "http://platform-governance-service.tejoma.svc.cluster.local"
+  JD_PARSER_SERVICE_URL: "http://jd-parser-service.tejoma.svc.cluster.local"
+  CANDIDATE_SERVICE_URL: "http://candidate-service.tejoma.svc.cluster.local"
+  CHAT_SERVICE_URL: "http://chat-service.tejoma.svc.cluster.local"
+  RESUME_SERVICE_URL: "http://resume-service.tejoma.svc.cluster.local"
+  RECRUITING_SERVICE_URL: "http://recruiting-service.tejoma.svc.cluster.local"
+  ANALYTICS_SERVICE_URL: "http://analytics-service.tejoma.svc.cluster.local"
+  MATCHING_EVALUATION_SERVICE_URL: "http://matching-evaluation-service.tejoma.svc.cluster.local"
+  MATCHING_SKILL_DISCOVERY_SERVICE_URL: "http://matching-skill-discovery-service.tejoma.svc.cluster.local"
+  MATCHING_SCORING_SERVICE_URL: "http://matching-scoring-service.tejoma.svc.cluster.local"
+  CANDIDATE_CORE_SERVICE_URL: "http://candidate-core-service.tejoma.svc.cluster.local"
+  JOB_SERVICE_URL: "http://job-service.tejoma.svc.cluster.local"
+  MATCHING_DECISION_SERVICE_URL: "http://matching-decision-service.tejoma.svc.cluster.local"
+  MONOLITH_URL: ""  # the monolith's own internal address, e.g. http://monolith.tejoma.svc.cluster.local or the EC2 host - see MIGRATION_RUNBOOK.md
+  # Optional rate-limit overrides - src/middleware/rateLimit.middleware.ts's own defaults
+  # (300/15min global, 30/15min auth-sensitive) apply if left unset.
+  GATEWAY_GLOBAL_RATE_MAX: ""
+  GATEWAY_GLOBAL_RATE_WINDOW_MS: ""
+  GATEWAY_AUTH_RATE_MAX: ""
+  GATEWAY_AUTH_RATE_WINDOW_MS: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "4000"
+  prometheus.io/path: /metrics
+
+# Unlike the other three (internal-only) Tier 0 services, api-gateway is the public entry point -
+# this is where real traffic actually starts flowing through Tier 0 (MIGRATION_RUNBOOK.md §3).
+# Disabled by default: enabling this is itself the traffic-routing action that runbook explicitly
+# calls out as a deliberate, human-reviewed step, not something a Helm values default should do.
+ingress:
+  enabled: false
+  className: alb
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+    # alb.ingress.kubernetes.io/certificate-arn: ""  # set once ACM is provisioned (Batch 14b) and a real domain exists
+  host: ""  # e.g. api.tejoma.example.com - unset until a domain is configured (see helm/README.md)
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

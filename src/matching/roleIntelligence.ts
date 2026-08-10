@@ -5,7 +5,7 @@
 // skill/responsibility/title text (reusing the existing embedding service - no new ML
 // infrastructure), and exposes matchRoleByTitle() as the primitive future phases will call to
 // resolve an arbitrary JD title to the closest known role. Nothing here is read by
-// src/services.ts's live scoring yet (Phase 2 work).
+// src/matching/services.ts's live scoring yet (Phase 2 work).
 //
 // Extensibility: role_key is a stable slug and upsertRoleProfile() is a plain upsert - adding an
 // 8th, 9th, or 30th role later is a data addition via ROLE_SEEDS (or any future admin-authored

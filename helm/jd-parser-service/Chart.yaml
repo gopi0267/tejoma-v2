@@ -1,0 +1,6 @@
+apiVersion: v2
+name: jd-parser-service
+description: Tejoma JD Parser Service - Tier 0 (Batch 15). Stateless job-description parsing pipeline, extracted from src/jd-parser/.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

@@ -1,0 +1,82 @@
+# Default values for resume-service. See helm/identity-service/values.yaml's header comment for
+# the two supported ways to supply secrets - identical pattern, applied here.
+#
+# replicaCount is deliberately 1, NOT the usual 2 - this service stores permanent resume files on
+# its own container's local disk (src/services/storage/StorageAdapter.ts's header comment). A
+# second replica would be a real correctness bug, not just a scaling limitation: a file uploaded
+# to pod A would 404 when the download request happens to land on pod B. Do not raise this above 1
+# (and do not enable autoscaling) until a real object-storage adapter (S3) backs StorageAdapter.
+
+replicaCount: 1
+
+image:
+  repository: ""  # e.g. <account-id>.dkr.ecr.ap-south-1.amazonaws.com/tejoma-resume-service
+  tag: ""
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 4007
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+# Deliberately no autoscaling block, unlike every other Tier 0 chart - see the replicaCount
+# comment above for why more than one pod is unsafe today.
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 1
+  targetCPUUtilizationPercentage: 70
+
+probes:
+  liveness:
+    path: /live
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+  readiness:
+    path: /ready
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+terminationGracePeriodSeconds: 30
+preStopSleepSeconds: 5
+
+config:
+  NODE_ENV: production
+  LOG_LEVEL: info
+  FRONTEND_URL: ""
+  MONOLITH_INTERNAL_URL: ""
+
+existingSecret: ""
+secrets:
+  # Same value as the monolith's own JWT_SECRET - this service verifies the exact staff AND
+  # candidate tokens the monolith issues today, not a JWKS-based one.
+  JWT_SECRET: ""
+  # Required, not optional - parsing is this service's entire purpose. Same key the monolith's
+  # own GEMINI_API_KEY uses.
+  GEMINI_API_KEY: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "4007"
+  prometheus.io/path: /metrics
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

@@ -7,7 +7,10 @@
 
 import pkg from 'pg';
 import { config } from 'dotenv';
-import { User, Company, Candidate, Job, Swipe, MatchScore, ModelVersion, DailyStat, RecruiterNote, CompanyRegistrationRequest, CandidateAccount, SkillNode, SkillEdge, SkillRelationshipType, RoleProfile, MatchFeatureRecord, LtrModelVersion, MatchEvaluationRun, SkillDiscoveryProposal, SkillDiscoveryStatus, NormalizedJob, ProgressionType, SeniorityLevel, SeniorityTrend, CareerTransition, TenurePattern, EmploymentGap, DomainBreakdown, PredictedRole, CareerTrajectory, ReasoningConclusion, ConclusionSubjectType, DraftConclusion } from './types.js';
+import { User, Company, Candidate, Job, Swipe, MatchScore, ModelVersion, DailyStat, RecruiterNote, CompanyRegistrationRequest, CandidateAccount, SkillNode, SkillEdge, SkillRelationshipType, RoleProfile, MatchFeatureRecord, LtrModelVersion, MatchEvaluationRun, SkillDiscoveryProposal, SkillDiscoveryStatus, NormalizedJob, ProgressionType, SeniorityLevel, SeniorityTrend, CareerTransition, TenurePattern, EmploymentGap, DomainBreakdown, PredictedRole, CareerTrajectory, ReasoningConclusion, ConclusionSubjectType, DraftConclusion, ProficiencyShadowScore, BgeRetrievalShadowComparison, RankingEntry } from './types.js';
+// Tier 0 migration (Batch 13b) - see src/dualWrite.ts's header comment for the full contract.
+// Disabled by default (DUAL_WRITE_ENABLED); every call below is a no-op until an operator opts in.
+import * as dualWrite from './dualWrite.js';
 
 config({ path: '.env.local' });
 
@@ -107,9 +110,12 @@ export async function createUser(user: Omit<User, 'id' | 'created_at' | 'updated
 export async function updateUserPasswordHash(userId: number, passwordHash: string): Promise<boolean> {
   try {
     const result = await pool.query(
-      'UPDATE users SET password_hash = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      'UPDATE users SET password_hash = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING updated_at',
       [passwordHash, userId]
     );
+    if ((result.rowCount ?? 0) > 0) {
+      dualWrite.patchUser(userId, { password_hash: passwordHash, updated_at: result.rows[0].updated_at });
+    }
     return (result.rowCount ?? 0) > 0;
   } catch (error) {
     console.error('Error updating user password:', error);
@@ -119,7 +125,10 @@ export async function updateUserPasswordHash(userId: number, passwordHash: strin
 
 export async function updateLastLogin(userId: number): Promise<void> {
   try {
-    await pool.query('UPDATE users SET last_login_at = CURRENT_TIMESTAMP WHERE id = $1', [userId]);
+    const result = await pool.query('UPDATE users SET last_login_at = CURRENT_TIMESTAMP WHERE id = $1 RETURNING last_login_at', [userId]);
+    if (result.rows[0]) {
+      dualWrite.patchUser(userId, { last_login_at: result.rows[0].last_login_at });
+    }
   } catch (error) {
     console.error('Error updating last login:', error);
   }
@@ -168,7 +177,14 @@ export async function createCandidateAccount(account: { name: string; email: str
        RETURNING *`,
       [account.name, account.email, account.phone, account.password_hash]
     );
-    return result.rows[0];
+    const row = result.rows[0];
+    dualWrite.upsertCandidateAccount({
+      id: row.id, name: row.name, email: row.email, phone: row.phone, password_hash: row.password_hash,
+      is_active: row.is_active, deleted_at: row.deleted_at, created_at: row.created_at, updated_at: row.updated_at,
+    });
+    // Batch 16 (Candidate Service) - full-row mirror, same RETURNING result, second target database.
+    dualWrite.upsertCandidateAccountProfile(row);
+    return row;
   } catch (error) {
     console.error('Error creating candidate account:', error);
     return null;
@@ -178,9 +194,12 @@ export async function createCandidateAccount(account: { name: string; email: str
 export async function updateCandidateAccountPasswordHash(candidateId: number, passwordHash: string): Promise<boolean> {
   try {
     const result = await pool.query(
-      'UPDATE candidate_accounts SET password_hash = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      'UPDATE candidate_accounts SET password_hash = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING updated_at',
       [passwordHash, candidateId]
     );
+    if ((result.rowCount ?? 0) > 0) {
+      dualWrite.patchCandidateAccount(candidateId, { password_hash: passwordHash, updated_at: result.rows[0].updated_at });
+    }
     return (result.rowCount ?? 0) > 0;
   } catch (error) {
     console.error('Error updating candidate account password:', error);
@@ -236,7 +255,22 @@ export async function updateCandidateProfile(candidateId: number, fields: Candid
       `UPDATE candidate_accounts SET ${setClause}, updated_at = CURRENT_TIMESTAMP WHERE id = $${columns.length + 1} RETURNING *`,
       [...values, candidateId]
     );
-    return result.rows[0] || null;
+    const row = result.rows[0];
+    // Identity DB only owns the auth-column slice of candidate_accounts (Phase 3(database)
+    // section 4's split) - of everything this function can update, `name` is the only column
+    // that also exists there. Every other profile field (headline, skills, etc.) has nothing to
+    // mirror to on Identity's side.
+    if (row && columns.includes('name')) {
+      dualWrite.patchCandidateAccount(candidateId, { name: row.name, updated_at: row.updated_at });
+    }
+    // Batch 16 (Candidate Service) - mirrors whatever columns actually changed, generically,
+    // using the RETURNING result's own values (never independently recomputed).
+    if (row) {
+      const changedFields: Record<string, unknown> = { updated_at: row.updated_at };
+      for (const col of columns) changedFields[col] = row[col];
+      dualWrite.patchCandidateAccountProfile(candidateId, changedFields);
+    }
+    return row || null;
   } catch (error) {
     console.error('Error updating candidate profile:', error);
     return null;
@@ -246,9 +280,14 @@ export async function updateCandidateProfile(candidateId: number, fields: Candid
 export async function markCandidateOnboardingComplete(candidateId: number): Promise<boolean> {
   try {
     const result = await pool.query(
-      'UPDATE candidate_accounts SET onboarding_completed_at = CURRENT_TIMESTAMP WHERE id = $1',
+      'UPDATE candidate_accounts SET onboarding_completed_at = CURRENT_TIMESTAMP WHERE id = $1 RETURNING onboarding_completed_at',
       [candidateId]
     );
+    if ((result.rowCount ?? 0) > 0) {
+      // Batch 16 (Candidate Service) - the one column this function touches that Identity DB
+      // never had a reason to mirror (onboarding is a profile-domain concern, not an auth one).
+      dualWrite.patchCandidateAccountProfile(candidateId, { onboarding_completed_at: result.rows[0].onboarding_completed_at });
+    }
     return (result.rowCount ?? 0) > 0;
   } catch (error) {
     console.error('Error marking candidate onboarding complete:', error);
@@ -306,7 +345,9 @@ export async function createCandidateExperience(candidateAccountId: number, fiel
         fields.key_responsibilities ?? null, fields.skills_used ?? null,
       ]
     );
-    return result.rows[0];
+    const row = result.rows[0];
+    dualWrite.upsertCandidateExperience(row); // Batch 16 (Candidate Service)
+    return row;
   } catch (error) {
     console.error('Error creating candidate experience:', error);
     return null;
@@ -325,7 +366,9 @@ export async function updateCandidateExperience(id: number, candidateAccountId: 
        RETURNING *`,
       [...values, id, candidateAccountId]
     );
-    return result.rows[0] || null;
+    const row = result.rows[0];
+    if (row) dualWrite.upsertCandidateExperience(row); // Batch 16 (Candidate Service)
+    return row || null;
   } catch (error) {
     console.error('Error updating candidate experience:', error);
     return null;
@@ -338,7 +381,9 @@ export async function deleteCandidateExperience(id: number, candidateAccountId: 
       'DELETE FROM candidate_experiences WHERE id = $1 AND candidate_account_id = $2',
       [id, candidateAccountId]
     );
-    return (result.rowCount ?? 0) > 0;
+    const deleted = (result.rowCount ?? 0) > 0;
+    if (deleted) dualWrite.deleteCandidateExperienceMirror(id); // Batch 16 (Candidate Service)
+    return deleted;
   } catch (error) {
     console.error('Error deleting candidate experience:', error);
     return false;
@@ -350,10 +395,15 @@ export async function deleteCandidateExperience(id: number, candidateAccountId: 
 
 export async function createCandidateRefreshToken(params: { candidateId: number; tokenHash: string; userAgent?: string | null; ip?: string | null; expiresAt: Date; remember?: boolean }): Promise<void> {
   try {
-    await pool.query(
-      `INSERT INTO candidate_refresh_tokens (candidate_id, token_hash, user_agent, ip_address, expires_at, remember) VALUES ($1, $2, $3, $4, $5, $6)`,
+    const result = await pool.query(
+      `INSERT INTO candidate_refresh_tokens (candidate_id, token_hash, user_agent, ip_address, expires_at, remember) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, created_at`,
       [params.candidateId, params.tokenHash, params.userAgent || null, params.ip || null, params.expiresAt, params.remember !== false]
     );
+    const row = result.rows[0];
+    dualWrite.upsertCandidateRefreshToken({
+      id: row.id, candidate_id: params.candidateId, token_hash: params.tokenHash, user_agent: params.userAgent || null,
+      ip_address: params.ip || null, created_at: row.created_at, expires_at: params.expiresAt, revoked_at: null, remember: params.remember !== false,
+    });
   } catch (error) {
     console.error('Error creating candidate refresh token:', error);
     throw error;
@@ -372,7 +422,8 @@ export async function findCandidateRefreshTokenByHash(tokenHash: string): Promis
 
 export async function revokeCandidateRefreshTokenByHash(tokenHash: string): Promise<void> {
   try {
-    await pool.query('UPDATE candidate_refresh_tokens SET revoked_at = CURRENT_TIMESTAMP WHERE token_hash = $1 AND revoked_at IS NULL', [tokenHash]);
+    const result = await pool.query('UPDATE candidate_refresh_tokens SET revoked_at = CURRENT_TIMESTAMP WHERE token_hash = $1 AND revoked_at IS NULL RETURNING id, revoked_at', [tokenHash]);
+    if (result.rows.length > 0) dualWrite.revokeCandidateRefreshTokens(result.rows);
   } catch (error) {
     console.error('Error revoking candidate refresh token:', error);
   }
@@ -380,7 +431,8 @@ export async function revokeCandidateRefreshTokenByHash(tokenHash: string): Prom
 
 export async function revokeAllCandidateRefreshTokensForCandidate(candidateId: number): Promise<void> {
   try {
-    await pool.query('UPDATE candidate_refresh_tokens SET revoked_at = CURRENT_TIMESTAMP WHERE candidate_id = $1 AND revoked_at IS NULL', [candidateId]);
+    const result = await pool.query('UPDATE candidate_refresh_tokens SET revoked_at = CURRENT_TIMESTAMP WHERE candidate_id = $1 AND revoked_at IS NULL RETURNING id, revoked_at', [candidateId]);
+    if (result.rows.length > 0) dualWrite.revokeCandidateRefreshTokens(result.rows);
   } catch (error) {
     console.error('Error revoking all candidate refresh tokens:', error);
   }
@@ -465,7 +517,9 @@ export async function createUserByAdmin(params: {
        RETURNING *`,
       [params.email, params.phone, params.passwordHash, params.companyId, params.role, params.name, params.createdBy]
     );
-    return result.rows[0];
+    const row = result.rows[0];
+    dualWrite.upsertUser(row);
+    return row;
   } catch (error) {
     console.error('Error creating user by admin:', error);
     return null;
@@ -524,7 +578,15 @@ export async function updateUserDetails(
        RETURNING *`,
       values
     );
-    return result.rows[0] || null;
+    const row = result.rows[0];
+    if (row) {
+      const patch: Record<string, unknown> = { updated_by: row.updated_by, updated_at: row.updated_at };
+      for (const key of Object.keys(updates) as (keyof typeof updates)[]) {
+        if (updates[key] !== undefined) patch[key] = row[key];
+      }
+      dualWrite.patchUser(id, patch);
+    }
+    return row || null;
   } catch (error) {
     console.error('Error updating user details:', error);
     return null;
@@ -539,7 +601,11 @@ export async function updateUserStatus(id: number, companyId: number, isActive: 
        RETURNING *`,
       [isActive, isActive ? null : actorId, id, companyId]
     );
-    return result.rows[0] || null;
+    const row = result.rows[0];
+    if (row) {
+      dualWrite.patchUser(id, { is_active: row.is_active, disabled_by: row.disabled_by, updated_by: row.updated_by, updated_at: row.updated_at });
+    }
+    return row || null;
   } catch (error) {
     console.error('Error updating user status:', error);
     return null;
@@ -550,9 +616,14 @@ export async function softDeleteUser(id: number, companyId: number, actorId: num
   try {
     const result = await pool.query(
       `UPDATE users SET deleted_at = CURRENT_TIMESTAMP, updated_by = $1, updated_at = CURRENT_TIMESTAMP
-       WHERE id = $2 AND company_id = $3 AND deleted_at IS NULL`,
+       WHERE id = $2 AND company_id = $3 AND deleted_at IS NULL
+       RETURNING deleted_at, updated_by, updated_at`,
       [actorId, id, companyId]
     );
+    if ((result.rowCount ?? 0) > 0) {
+      const row = result.rows[0];
+      dualWrite.patchUser(id, { deleted_at: row.deleted_at, updated_by: row.updated_by, updated_at: row.updated_at });
+    }
     return (result.rowCount ?? 0) > 0;
   } catch (error) {
     console.error('Error soft-deleting user:', error);
@@ -568,7 +639,11 @@ export async function resetUserPasswordHash(id: number, companyId: number, newPa
        RETURNING *`,
       [newPasswordHash, actorId, id, companyId]
     );
-    return result.rows[0] || null;
+    const row = result.rows[0];
+    if (row) {
+      dualWrite.patchUser(id, { password_hash: newPasswordHash, password_reset_by: row.password_reset_by, updated_at: row.updated_at });
+    }
+    return row || null;
   } catch (error) {
     console.error('Error resetting user password:', error);
     return null;
@@ -707,7 +782,9 @@ export async function createCompanyRegistrationRequest(params: {
         params.address, params.adminName, params.adminEmail, params.adminPhone, params.passwordHash,
       ]
     );
-    return result.rows[0];
+    const row = result.rows[0];
+    dualWrite.upsertCompanyRegistrationRequest(row);
+    return row;
   } catch (error) {
     console.error('Error creating company registration request:', error);
     return null;
@@ -885,6 +962,13 @@ export async function approveCompanyRegistrationRequest(id: number, reviewerId: 
     );
 
     await client.query('COMMIT');
+    // Dual-write only after COMMIT succeeds - all three rows are now durably real on the primary
+    // side, which is the only state that should ever be mirrored (see src/dualWrite.ts's header
+    // comment). This is the one place a single db.ts function writes to three different target
+    // databases, since the primary write itself is a single-transaction, three-table operation.
+    dualWrite.upsertCompany(company);
+    dualWrite.upsertUser(adminUser);
+    dualWrite.upsertCompanyRegistrationRequest(updatedRequestResult.rows[0]);
     return { request: updatedRequestResult.rows[0], company, adminUser };
   } catch (error) {
     await client.query('ROLLBACK');
@@ -910,7 +994,9 @@ export async function rejectCompanyRegistrationRequest(id: number, reviewerId: n
        RETURNING *`,
       [reviewerId, reason, id]
     );
-    return result.rows[0] || null;
+    const row = result.rows[0];
+    if (row) dualWrite.upsertCompanyRegistrationRequest(row);
+    return row || null;
   } catch (error) {
     console.error('Error rejecting company registration request:', error);
     return { error: 'Failed to reject request' };
@@ -999,7 +1085,9 @@ const PASSWORD_HISTORY_LIMIT = 5;
 
 export async function addPasswordHistory(userId: number, passwordHash: string): Promise<void> {
   try {
-    await pool.query('INSERT INTO password_history (user_id, password_hash) VALUES ($1, $2)', [userId, passwordHash]);
+    const inserted = await pool.query('INSERT INTO password_history (user_id, password_hash) VALUES ($1, $2) RETURNING id, created_at', [userId, passwordHash]);
+    const row = inserted.rows[0];
+    dualWrite.upsertPasswordHistory({ id: row.id, user_id: userId, password_hash: passwordHash, created_at: row.created_at });
     // Keep only the most recent N entries per user.
     await pool.query(
       `DELETE FROM password_history WHERE user_id = $1 AND id NOT IN (
@@ -1007,6 +1095,7 @@ export async function addPasswordHistory(userId: number, passwordHash: string): 
        )`,
       [userId, PASSWORD_HISTORY_LIMIT]
     );
+    dualWrite.prunePasswordHistory(userId, PASSWORD_HISTORY_LIMIT);
   } catch (error) {
     console.error('Error adding password history:', error);
   }
@@ -1026,7 +1115,7 @@ export async function getPasswordHistory(userId: number): Promise<{ password_has
 }
 
 // Helper to map DB row to Candidate model
-function mapRowToCandidate(row: any): Candidate {
+export function mapRowToCandidate(row: any): Candidate {
   if (!row) return row;
 
   const parseList = (val: any, sep = ', ') => {
@@ -1275,7 +1364,9 @@ export async function createCandidate(candidate: Omit<Candidate, 'id' | 'created
        RETURNING *`,
       cleanParams
     );
-    return result.rows[0] ? mapRowToCandidate(result.rows[0]) : null;
+    const row = result.rows[0];
+    if (row) dualWrite.upsertCandidate(row);
+    return row ? mapRowToCandidate(row) : null;
   } catch (error) {
     console.error('Error creating candidate:', error);
     return null;
@@ -1290,11 +1381,56 @@ export async function deleteCandidate(id: number, companyId: number): Promise<bo
     // migration-phase9-reasoning-layer.sql), so it needs an explicit cleanup call here; every
     // other Phase 9 table (career_trajectories, project_intelligence) is FK'd and cleans up on
     // its own via ON DELETE CASCADE.
-    if (deleted) await deleteReasoningConclusions('candidate', id);
+    if (deleted) {
+      await deleteReasoningConclusions('candidate', id);
+      dualWrite.deleteCandidateMirror(id);
+    }
     return deleted;
   } catch (error) {
     console.error('Error deleting candidate:', error);
     return false;
+  }
+}
+
+// ==================== reverse mirror (write-cutover completion plan, Phase A) ====================
+// Candidate Core Service is now the write-authority for `candidates` (its own real INSERT/DELETE,
+// its own sequence assigns new ids) - these two functions are the reverse of this file's own
+// existing dualWrite.upsertCandidate/deleteCandidateMirror: they keep THIS table (the monolith's
+// own copy) fresh instead, by explicit id (never re-running this table's own sequence), so
+// recruiter-review.routes.ts's list/detail views (staying monolith-local, reading this table
+// directly) keep seeing real data. Called from src/api/candidate-core-internal.routes.ts's new
+// mirror-and-notify/mirror-delete endpoints - same column-list-driven upsert shape
+// candidate-core-service's own dual-write TARGET functions already use, just run in the other
+// direction.
+const CANDIDATE_MIRROR_COLUMNS = [
+  'id', 'name', 'email', 'phone', 'skills', 'primary_skills', 'secondary_skills', 'skills_array',
+  'years_of_experience', 'current_location', 'preferred_location', 'current_company',
+  'previous_companies', 'current_job_title', 'industry_domain', 'education',
+  'highest_qualification', 'graduation_year', 'university', 'certifications', 'projects',
+  'technical_tools', 'languages_known', 'current_ctc', 'expected_ctc', 'notice_period',
+  'willingness_to_relocate', 'linkedin_url', 'github_or_portfolio_url', 'resume_summary',
+  'resume_text', 'ai_confidence_score', 'extraction_status', 'resume_file_path',
+  'candidate_hash', 'resume_embedding', 'company_id', 'confidence_profile', 'work_history',
+  'project_entries',
+];
+const CANDIDATE_MIRROR_JSON_COLUMNS = new Set(['confidence_profile', 'work_history', 'project_entries']);
+
+export async function mirrorUpsertCandidate(row: Record<string, unknown>): Promise<void> {
+  const columns = CANDIDATE_MIRROR_COLUMNS.filter((c) => c in row);
+  const values = columns.map((c) => (CANDIDATE_MIRROR_JSON_COLUMNS.has(c) && row[c] !== null && row[c] !== undefined ? JSON.stringify(row[c]) : row[c]));
+  const placeholders = columns.map((_, i) => `$${i + 1}`).join(', ');
+  const updateSet = columns.filter((c) => c !== 'id').map((c) => `${c} = EXCLUDED.${c}`).join(', ');
+  await pool.query(
+    `INSERT INTO candidates (${columns.join(', ')}) VALUES (${placeholders})
+     ON CONFLICT (id) DO UPDATE SET ${updateSet}`,
+    values
+  );
+}
+
+export async function mirrorDeleteCandidate(id: number): Promise<void> {
+  const result = await pool.query('DELETE FROM candidates WHERE id = $1', [id]);
+  if ((result.rowCount ?? 0) > 0) {
+    await deleteReasoningConclusions('candidate', id);
   }
 }
 
@@ -1342,7 +1478,9 @@ export async function updateCandidate(id: number, updates: Partial<Candidate>, c
       `UPDATE candidates SET ${fields.join(', ')} WHERE id = $${paramIndex} AND company_id = $${paramIndex + 1} RETURNING *`,
       values
     );
-    return result.rows[0] ? mapRowToCandidate(result.rows[0]) : null;
+    const row = result.rows[0];
+    if (row) dualWrite.upsertCandidate(row);
+    return row ? mapRowToCandidate(row) : null;
   } catch (error) {
     console.error('Error updating candidate:', error);
     return null;
@@ -1414,7 +1552,9 @@ export async function createJob(job: Omit<Job, 'id' | 'created_at' | 'updated_at
         job.description_embedding ?? null,
       ]
     );
-    return result.rows[0];
+    const row = result.rows[0];
+    if (row) dualWrite.upsertJob(row);
+    return row;
   } catch (error) {
     console.error('Error creating job:', error);
     return null;
@@ -1446,7 +1586,9 @@ export async function updateJob(id: number, companyId: number, updates: Partial<
       `UPDATE jobs SET ${fields.join(', ')} WHERE id = $${paramIndex} AND company_id = $${paramIndex + 1} RETURNING *`,
       values
     );
-    return result.rows[0] || null;
+    const row = result.rows[0];
+    if (row) dualWrite.upsertJob(row);
+    return row || null;
   } catch (error) {
     console.error('Error updating job:', error);
     return null;
@@ -1456,6 +1598,7 @@ export async function updateJob(id: number, companyId: number, updates: Partial<
 export async function updateJobEmbedding(id: number, embedding: number[]): Promise<void> {
   try {
     await pool.query('UPDATE jobs SET description_embedding = $1 WHERE id = $2', [embedding, id]);
+    dualWrite.patchJob(id, { description_embedding: embedding });
   } catch (error) {
     console.error('Error updating job embedding:', error);
   }
@@ -1467,7 +1610,9 @@ export async function updateJobStatus(id: number, status: 'open' | 'closed' | 'o
       'UPDATE jobs SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND company_id = $3 RETURNING *',
       [status, id, companyId]
     );
-    return result.rows[0] || null;
+    const row = result.rows[0];
+    if (row) dualWrite.patchJob(id, { status: row.status, updated_at: row.updated_at });
+    return row || null;
   } catch (error) {
     console.error('Error updating job status:', error);
     return null;
@@ -1493,17 +1638,20 @@ export async function upsertKnowledgeChunk(chunk: {
   content: string;
   embedding: number[];
 }): Promise<void> {
-  await pool.query(
+  const result = await pool.query(
     `INSERT INTO knowledge_base_chunks (company_id, source_type, source_id, content, embedding)
      VALUES ($1, $2, $3, $4, $5)
      ON CONFLICT (source_type, source_id)
-     DO UPDATE SET company_id = $1, content = $4, embedding = $5, updated_at = CURRENT_TIMESTAMP`,
+     DO UPDATE SET company_id = $1, content = $4, embedding = $5, updated_at = CURRENT_TIMESTAMP
+     RETURNING *`,
     [chunk.company_id, chunk.source_type, chunk.source_id, chunk.content, chunk.embedding]
   );
+  dualWrite.upsertKnowledgeChunk(result.rows[0]); // Batch 17 (Chat Service)
 }
 
 export async function deleteKnowledgeChunk(sourceType: 'candidate' | 'job' | 'company', sourceId: number): Promise<void> {
   await pool.query('DELETE FROM knowledge_base_chunks WHERE source_type = $1 AND source_id = $2', [sourceType, sourceId]);
+  dualWrite.deleteKnowledgeChunkMirror(sourceType, sourceId); // Batch 17 (Chat Service)
 }
 
 // Candidate/job/company chunks are all scoped to the caller's own company_id now that
@@ -1610,6 +1758,7 @@ export async function recordSwipe(swipe: {
 
     const savedRow = result.rows[0];
     console.log('✅ recordSwipe SUCCESS:', savedRow);
+    dualWrite.upsertSwipe(savedRow);
 
     // Phase 3: fire-and-forget mutual-match check - never awaited, never throws into this
     // function, cannot change this response in any way. Returns instantly for every ordinary
@@ -1638,6 +1787,73 @@ export async function recordSwipe(swipe: {
     console.error('❌ recordSwipe FAILED:', error);
     return null;
   }
+}
+
+// ==================== reverse mirror (write-cutover completion plan, Phase C) ====================
+// Matching Decision Service is now the write-authority for `swipes` (its own real INSERT, its own
+// sequence assigns new ids - see matching-decision-service/migrations/002_resync_sequences.up.sql
+// for the primary-key-collision bug found and fixed before this could ship). This keeps THIS
+// table (the monolith's own copy) fresh by explicit id, the same reverse-mirror shape as
+// mirrorUpsertJob/mirrorUpsertCandidate above, so recruiter-review.routes.ts's list/detail views
+// (staying monolith-local, reading this table directly) keep seeing real data. Called from
+// src/api/matching-decision-internal.routes.ts's new POST /swipes/mirror-and-notify, which then
+// re-fires recordSwipe's own hook bundle (mutual-match check, syncApplicationStatusFromRecruiter
+// Decision) plus recordSwipeWithSideEffects's (shadow logging, broadcastEvent, enqueueRetrain)
+// against the now-mirrored row - dualWrite.upsertSwipe is deliberately NOT called here (unlike
+// recordSwipe above); this service IS dual-write's target, not its source, for this table now.
+const SWIPE_MIRROR_COLUMNS = [
+  'id', 'company_id', 'recruiter_id', 'candidate_id', 'job_id', 'action', 'match_score',
+  'used_for_training', 'reason', 'breakdown', 'decision_time_seconds', 'timestamp',
+];
+const SWIPE_MIRROR_JSON_COLUMNS = new Set(['breakdown']);
+
+export async function mirrorUpsertSwipe(row: Record<string, unknown>): Promise<void> {
+  const columns = SWIPE_MIRROR_COLUMNS.filter((c) => c in row);
+  const values = columns.map((c) => (SWIPE_MIRROR_JSON_COLUMNS.has(c) && row[c] !== null && row[c] !== undefined ? JSON.stringify(row[c]) : row[c]));
+  const placeholders = columns.map((_, i) => `$${i + 1}`).join(', ');
+  const updateSet = columns.filter((c) => c !== 'id').map((c) => `${c} = EXCLUDED.${c}`).join(', ');
+  await pool.query(
+    `INSERT INTO swipes (${columns.join(', ')}) VALUES (${placeholders})
+     ON CONFLICT (id) DO UPDATE SET ${updateSet}`,
+    values
+  );
+}
+
+// ==================== reverse mirror (write-cutover completion plan, Phase D) ====================
+// Matching Decision Service is now the write-authority for `recruiter_notes` and
+// `detailed_scoring_reports` too, same reverse-mirror shape as mirrorUpsertSwipe above - explicit
+// id, never re-running this table's own sequence. Called from src/api/matching-decision-internal
+// .routes.ts's new POST /recruiter-review/notes/mirror-and-notify and .../detailed-score/mirror-
+// and-notify. Neither has a hook bundle to re-fire (the monolith's own upsertRecruiterNoteForSwipe/
+// generateAndSaveDetailedScore never had background side effects beyond the write itself) - unlike
+// mirrorUpsertSwipe, these two are the entire job of their endpoints.
+const RECRUITER_NOTE_MIRROR_COLUMNS = ['id', 'company_id', 'candidate_id', 'job_id', 'note', 'created_by', 'updated_by', 'created_at', 'updated_at'];
+
+export async function mirrorUpsertRecruiterNote(row: Record<string, unknown>): Promise<void> {
+  const columns = RECRUITER_NOTE_MIRROR_COLUMNS.filter((c) => c in row);
+  const values = columns.map((c) => row[c]);
+  const placeholders = columns.map((_, i) => `$${i + 1}`).join(', ');
+  const updateSet = columns.filter((c) => c !== 'id').map((c) => `${c} = EXCLUDED.${c}`).join(', ');
+  await pool.query(
+    `INSERT INTO recruiter_notes (${columns.join(', ')}) VALUES (${placeholders})
+     ON CONFLICT (id) DO UPDATE SET ${updateSet}`,
+    values
+  );
+}
+
+const DETAILED_SCORING_REPORT_MIRROR_COLUMNS = ['id', 'company_id', 'candidate_id', 'job_id', 'report', 'generated_by', 'generated_at'];
+const DETAILED_SCORING_REPORT_MIRROR_JSON_COLUMNS = new Set(['report']);
+
+export async function mirrorUpsertDetailedScoringReport(row: Record<string, unknown>): Promise<void> {
+  const columns = DETAILED_SCORING_REPORT_MIRROR_COLUMNS.filter((c) => c in row);
+  const values = columns.map((c) => (DETAILED_SCORING_REPORT_MIRROR_JSON_COLUMNS.has(c) && row[c] !== null && row[c] !== undefined ? JSON.stringify(row[c]) : row[c]));
+  const placeholders = columns.map((_, i) => `$${i + 1}`).join(', ');
+  const updateSet = columns.filter((c) => c !== 'id').map((c) => `${c} = EXCLUDED.${c}`).join(', ');
+  await pool.query(
+    `INSERT INTO detailed_scoring_reports (${columns.join(', ')}) VALUES (${placeholders})
+     ON CONFLICT (id) DO UPDATE SET ${updateSet}`,
+    values
+  );
 }
 
 // Deliberate, documented exceptions to company scoping - used only by (a) the ML ensemble,
@@ -1991,7 +2207,7 @@ export async function getOrCreateLinkedCandidateRow(candidateAccountId: number, 
     const result = await pool.query(
       `INSERT INTO candidates (company_id, candidate_account_id, name, email, phone, skills, years_of_experience, current_location, education, resume_summary, skills_array)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-       RETURNING id`,
+       RETURNING *`,
       [
         companyId,
         candidateAccountId,
@@ -2006,7 +2222,9 @@ export async function getOrCreateLinkedCandidateRow(candidateAccountId: number, 
         skillsArray,
       ]
     );
-    return result.rows[0].id;
+    const row = result.rows[0];
+    dualWrite.upsertCandidate(row);
+    return row.id;
   } catch (error: any) {
     if (error.code === '23505') {
       // Unique-violation on (candidate_account_id, company_id) - a concurrent request already
@@ -2030,7 +2248,19 @@ export async function recordCandidateDecision(params: { candidateAccountId: numb
        RETURNING *`,
       [params.candidateAccountId, params.jobId, params.action, params.decisionType]
     );
-    return result.rows[0];
+    const row = result.rows[0];
+    if (row) {
+      dualWrite.upsertCandidateDecision({
+        id: row.id,
+        candidate_account_id: row.candidate_account_id,
+        job_id: row.job_id,
+        decision_type: row.decision_type,
+        decision_date: row.timestamp,
+        created_at: row.timestamp,
+        updated_at: row.timestamp,
+      });
+    }
+    return row;
   } catch (error) {
     console.error('Error recording candidate decision:', error);
     return null;
@@ -2103,9 +2333,9 @@ export async function getCandidateActiveDecisions(candidateAccountId: number, ac
 // mutual_matches_candidate_job_key UNIQUE constraint is the DB-enforced duplicate guard.
 async function tryCreateMutualMatchAtomic(candidateAccountId: number, jobId: number, companyId: number, candidatesId: number): Promise<void> {
   try {
-    // RETURNING id (Phase 4) - a row only comes back when this call is the one that actually
+    // RETURNING * (Phase 4, extended by Item 4) - a row only comes back when this call is the one that actually
     // inserted the match (not skipped by ON CONFLICT), so notification creation below inherits
-    // mutual_matches' own exactly-once guarantee for free: no separate dedup logic needed.
+    // mutual_matches' own exactly-once guarantee for free: no separate dedup logic needed. Full row needed for dual-write mirror.
     const result = await pool.query(
       `INSERT INTO mutual_matches (candidate_account_id, job_id, company_id, candidates_id)
        SELECT $1, $2, $3, $4
@@ -2120,17 +2350,26 @@ async function tryCreateMutualMatchAtomic(candidateAccountId: number, jobId: num
          ORDER BY timestamp DESC, id DESC LIMIT 1
        ) = 1
        ON CONFLICT (candidate_account_id, job_id) DO NOTHING
-       RETURNING id`,
+       RETURNING *`,
       [candidateAccountId, jobId, companyId, candidatesId]
     );
 
-    const matchId = result.rows[0]?.id;
-    if (matchId) {
+    const matchRow = result.rows[0];
+    if (matchRow) {
       // Never let a notification failure look like it affected the match itself - the match
       // row above is already committed regardless of what happens here.
-      createMatchNotifications(matchId, candidateAccountId, jobId, companyId, candidatesId).catch((err) =>
+      createMatchNotifications(matchRow.id, candidateAccountId, jobId, companyId, candidatesId).catch((err) =>
         console.error('Error creating match notifications:', err)
       );
+      // Mirror to candidate-service (fire-and-forget, non-fatal)
+      dualWrite.upsertMutualMatch({
+        id: matchRow.id,
+        candidate_account_id: matchRow.candidate_account_id,
+        job_id: matchRow.job_id,
+        match_score: matchRow.match_score ?? null,
+        created_at: matchRow.created_at,
+        updated_at: matchRow.updated_at,
+      });
     }
   } catch (error) {
     console.error('Error evaluating mutual match:', error);
@@ -2150,17 +2389,23 @@ async function createMatchNotifications(matchId: number, candidateAccountId: num
   const jobTitle = jobRes.rows[0]?.title || 'a job';
   const companyName = jobRes.rows[0]?.company_name;
 
-  await pool.query(
+  const candidateNotifTitle = `You matched with ${jobTitle}`;
+  const candidateNotifMessage = `You and the recruiter both showed interest${companyName ? ` at ${companyName}` : ''} for ${jobTitle}. Check out your match!`;
+  const candidateNotifRes = await pool.query(
     `INSERT INTO candidate_notifications (candidate_account_id, match_id, type, title, message)
      VALUES ($1, $2, 'match_created', $3, $4)
-     ON CONFLICT (candidate_account_id, match_id, type) DO NOTHING`,
-    [
-      candidateAccountId,
-      matchId,
-      `You matched with ${jobTitle}`,
-      `You and the recruiter both showed interest${companyName ? ` at ${companyName}` : ''} for ${jobTitle}. Check out your match!`,
-    ]
+     ON CONFLICT (candidate_account_id, match_id, type) DO NOTHING
+     RETURNING id, read_at, created_at`,
+    [candidateAccountId, matchId, candidateNotifTitle, candidateNotifMessage]
   );
+  const candidateNotifRow = candidateNotifRes.rows[0];
+  if (candidateNotifRow) {
+    dualWrite.upsertCandidateNotification({
+      id: candidateNotifRow.id, candidate_account_id: candidateAccountId, match_id: matchId,
+      type: 'match_created', title: candidateNotifTitle, message: candidateNotifMessage,
+      read_at: candidateNotifRow.read_at, created_at: candidateNotifRow.created_at, job_id: null,
+    });
+  }
 
   const swipeRes = await pool.query(
     `SELECT recruiter_id FROM swipes WHERE candidate_id = $1 AND job_id = $2 AND company_id = $3 AND action = 1 ORDER BY timestamp DESC, id DESC LIMIT 1`,
@@ -2168,12 +2413,22 @@ async function createMatchNotifications(matchId: number, candidateAccountId: num
   );
   const recruiterId = swipeRes.rows[0]?.recruiter_id;
   if (recruiterId) {
-    await pool.query(
+    const title = `New mutual match for ${jobTitle}`;
+    const message = `A candidate matched with your job posting for ${jobTitle}.`;
+    const notifRes = await pool.query(
       `INSERT INTO recruiter_notifications (user_id, company_id, match_id, type, title, message)
        VALUES ($1, $2, $3, 'match_created', $4, $5)
-       ON CONFLICT (user_id, match_id, type) DO NOTHING`,
-      [recruiterId, companyId, matchId, `New mutual match for ${jobTitle}`, `A candidate matched with your job posting for ${jobTitle}.`]
+       ON CONFLICT (user_id, match_id, type) DO NOTHING
+       RETURNING id, read_at, created_at`,
+      [recruiterId, companyId, matchId, title, message]
     );
+    const notifRow = notifRes.rows[0];
+    if (notifRow) {
+      dualWrite.upsertRecruiterNotification({
+        id: notifRow.id, user_id: recruiterId, company_id: companyId, match_id: matchId,
+        type: 'match_created', title, message, read_at: notifRow.read_at, created_at: notifRow.created_at,
+      });
+    }
   }
 }
 
@@ -2275,12 +2530,25 @@ export async function syncApplicationStatusFromRecruiterDecision(candidatesId: n
     );
     if (existing.rows[0]?.status === status) return; // no-op - avoids a duplicate notification for an unchanged status
 
-    await pool.query(
+    const result = await pool.query(
       `INSERT INTO candidate_application_status (candidate_account_id, job_id, company_id, status, updated_at)
        VALUES ($1, $2, $3, $4, NOW())
-       ON CONFLICT (candidate_account_id, job_id) DO UPDATE SET status = EXCLUDED.status, updated_at = NOW()`,
+       ON CONFLICT (candidate_account_id, job_id) DO UPDATE SET status = EXCLUDED.status, updated_at = NOW()
+       RETURNING *`,
       [candidateAccountId, jobId, companyId, status]
     );
+
+    const statusRow = result.rows[0];
+    if (statusRow) {
+      // Mirror to candidate-service (fire-and-forget, non-fatal)
+      dualWrite.upsertCandidateApplicationStatus({
+        id: statusRow.id,
+        candidate_account_id: statusRow.candidate_account_id,
+        job_id: statusRow.job_id,
+        status: statusRow.status,
+        updated_at: statusRow.updated_at,
+      });
+    }
 
     const jobRes = await pool.query('SELECT title FROM jobs WHERE id = $1', [jobId]);
     const jobTitle = jobRes.rows[0]?.title || 'a job';
@@ -2288,11 +2556,22 @@ export async function syncApplicationStatusFromRecruiterDecision(candidatesId: n
 
     // Reuses Phase 4's candidate_notifications table (job_id now nullable-widened to support
     // this non-match notification type) - candidate only, recruiter gets nothing per spec.
-    await pool.query(
+    const appStatusTitle = `Application update: ${jobTitle}`;
+    const appStatusMessage = `Your application for ${jobTitle} is now ${statusLabel}.`;
+    const appStatusNotifRes = await pool.query(
       `INSERT INTO candidate_notifications (candidate_account_id, job_id, type, title, message)
-       VALUES ($1, $2, 'application_status_changed', $3, $4)`,
-      [candidateAccountId, jobId, `Application update: ${jobTitle}`, `Your application for ${jobTitle} is now ${statusLabel}.`]
+       VALUES ($1, $2, 'application_status_changed', $3, $4)
+       RETURNING id, read_at, created_at`,
+      [candidateAccountId, jobId, appStatusTitle, appStatusMessage]
     );
+    const appStatusNotifRow = appStatusNotifRes.rows[0];
+    if (appStatusNotifRow) {
+      dualWrite.upsertCandidateNotification({
+        id: appStatusNotifRow.id, candidate_account_id: candidateAccountId, match_id: null,
+        type: 'application_status_changed', title: appStatusTitle, message: appStatusMessage,
+        read_at: appStatusNotifRow.read_at, created_at: appStatusNotifRow.created_at, job_id: jobId,
+      });
+    }
   } catch (error) {
     console.error('Error syncing application status:', error);
   }
@@ -2566,9 +2845,13 @@ export async function getCandidateUnreadNotificationCount(candidateAccountId: nu
 export async function markCandidateNotificationRead(id: number, candidateAccountId: number): Promise<boolean> {
   try {
     const result = await pool.query(
-      `UPDATE candidate_notifications SET read_at = NOW() WHERE id = $1 AND candidate_account_id = $2 AND read_at IS NULL`,
+      `UPDATE candidate_notifications SET read_at = NOW() WHERE id = $1 AND candidate_account_id = $2 AND read_at IS NULL RETURNING id, read_at`,
       [id, candidateAccountId]
     );
+    const row = result.rows[0];
+    if (row) {
+      dualWrite.patchCandidateNotification(row.id, { read_at: row.read_at });
+    }
     return (result.rowCount ?? 0) > 0;
   } catch (error) {
     console.error('Error marking candidate notification read:', error);
@@ -2579,9 +2862,12 @@ export async function markCandidateNotificationRead(id: number, candidateAccount
 export async function markAllCandidateNotificationsRead(candidateAccountId: number): Promise<number> {
   try {
     const result = await pool.query(
-      `UPDATE candidate_notifications SET read_at = NOW() WHERE candidate_account_id = $1 AND read_at IS NULL`,
+      `UPDATE candidate_notifications SET read_at = NOW() WHERE candidate_account_id = $1 AND read_at IS NULL RETURNING id, read_at`,
       [candidateAccountId]
     );
+    for (const row of result.rows) {
+      dualWrite.patchCandidateNotification(row.id, { read_at: row.read_at });
+    }
     return result.rowCount ?? 0;
   } catch (error) {
     console.error('Error marking all candidate notifications read:', error);
@@ -2619,9 +2905,13 @@ export async function getRecruiterUnreadNotificationCount(userId: number, compan
 export async function markRecruiterNotificationRead(id: number, userId: number, companyId: number): Promise<boolean> {
   try {
     const result = await pool.query(
-      `UPDATE recruiter_notifications SET read_at = NOW() WHERE id = $1 AND user_id = $2 AND company_id = $3 AND read_at IS NULL`,
+      `UPDATE recruiter_notifications SET read_at = NOW() WHERE id = $1 AND user_id = $2 AND company_id = $3 AND read_at IS NULL RETURNING id, read_at`,
       [id, userId, companyId]
     );
+    const row = result.rows[0];
+    if (row) {
+      dualWrite.patchRecruiterNotification(row.id, { read_at: row.read_at });
+    }
     return (result.rowCount ?? 0) > 0;
   } catch (error) {
     console.error('Error marking recruiter notification read:', error);
@@ -2632,9 +2922,12 @@ export async function markRecruiterNotificationRead(id: number, userId: number, 
 export async function markAllRecruiterNotificationsRead(userId: number, companyId: number): Promise<number> {
   try {
     const result = await pool.query(
-      `UPDATE recruiter_notifications SET read_at = NOW() WHERE user_id = $1 AND company_id = $2 AND read_at IS NULL`,
+      `UPDATE recruiter_notifications SET read_at = NOW() WHERE user_id = $1 AND company_id = $2 AND read_at IS NULL RETURNING id, read_at`,
       [userId, companyId]
     );
+    for (const row of result.rows) {
+      dualWrite.patchRecruiterNotification(row.id, { read_at: row.read_at });
+    }
     return result.rowCount ?? 0;
   } catch (error) {
     console.error('Error marking all recruiter notifications read:', error);
@@ -2657,7 +2950,11 @@ export async function getRecruiterReviewDetail(candidateId: number, jobId: numbe
       'SELECT * FROM swipes WHERE company_id = $1 AND candidate_id = $2 AND job_id = $3 ORDER BY timestamp DESC, id DESC',
       [companyId, candidateId, jobId]
     );
-    const history = historyResult.rows.map((r) => ({ ...r, action: Number(r.action) }));
+    // Both action and match_score are Postgres NUMERIC columns - node-postgres returns NUMERIC as
+    // a JS string, not a number (see replaceReasoningConclusions's coercion comment for the same
+    // root cause). match_score wasn't coerced here before Phase 10 - found because Phase 10's own
+    // MatchNarrative.matchScore field surfaced the raw string value in its JSON response.
+    const history = historyResult.rows.map((r) => ({ ...r, action: Number(r.action), match_score: r.match_score === null ? null : Number(r.match_score) }));
 
     const noteResult = await pool.query(
       'SELECT * FROM recruiter_notes WHERE company_id = $1 AND candidate_id = $2 AND job_id = $3',
@@ -2724,7 +3021,9 @@ export async function upsertRecruiterNote(params: { companyId: number; candidate
        RETURNING *`,
       [params.companyId, params.candidateId, params.jobId, params.note, params.userId]
     );
-    return result.rows[0] || null;
+    const row = result.rows[0];
+    if (row) dualWrite.upsertRecruiterNote(row);
+    return row || null;
   } catch (error) {
     console.error('Error upserting recruiter note:', error);
     return null;
@@ -2745,10 +3044,12 @@ export async function upsertDetailedScoringReport(params: {
        VALUES ($1, $2, $3, $4, $5)
        ON CONFLICT (company_id, candidate_id, job_id)
        DO UPDATE SET report = $4, generated_by = $5, generated_at = CURRENT_TIMESTAMP
-       RETURNING report, generated_at`,
+       RETURNING *`,
       [params.companyId, params.candidateId, params.jobId, JSON.stringify(params.report), params.generatedBy]
     );
-    return result.rows[0] || null;
+    const row = result.rows[0];
+    if (row) dualWrite.upsertDetailedScoringReport(row);
+    return row ? { report: row.report, generated_at: row.generated_at } : null;
   } catch (error) {
     console.error('Error upserting detailed scoring report:', error);
     return null;
@@ -3173,7 +3474,9 @@ export async function saveLtrModelVersion(version: Omit<LtrModelVersion, 'id' | 
        RETURNING *`,
       [version.version, version.algorithm, version.training_examples, version.training_groups, version.ndcg_at_10, version.is_active]
     );
-    return result.rows[0];
+    const row = result.rows[0];
+    if (row) dualWrite.upsertLtrModelVersion(row);
+    return row;
   } catch (error) {
     console.error('Error saving LTR model version:', error);
     return null;
@@ -3200,7 +3503,9 @@ export async function saveEvaluationRun(run: Omit<MatchEvaluationRun, 'id' | 'ev
        RETURNING *`,
       [run.company_id, run.jobs_evaluated, run.swipes_evaluated, run.k, run.ndcg_at_k, run.map_at_k, run.mrr, run.precision_at_k, run.recall_at_k, run.data_volume_note]
     );
-    return result.rows[0];
+    const row = result.rows[0];
+    if (row) dualWrite.upsertMatchEvaluationRun(row);
+    return row;
   } catch (error) {
     console.error('Error saving evaluation run:', error);
     return null;
@@ -3240,7 +3545,7 @@ export async function getSwipesForEvaluation(companyId: number): Promise<Swipe[]
 }
 
 // ==================== SKILL INTELLIGENCE PLATFORM (Phase 1) ====================
-// Not yet read by src/services.ts's live scoring - see src/matching/skillIntelligence.ts for the
+// Not yet read by src/matching/services.ts's live scoring - see src/matching/skillIntelligence.ts for the
 // seeding/canonicalization logic that calls these. Every function here is a plain data-access
 // primitive; the domain logic (what to seed, how to canonicalize) lives in that module.
 
@@ -3270,7 +3575,9 @@ export async function upsertSkillNode(node: {
        RETURNING *`,
       [node.canonical_name, node.category, node.technology_domain ?? null, node.aliases, node.is_deprecated ?? false, node.is_emerging ?? false, node.source ?? 'dictionary', node.confidence ?? null]
     );
-    return result.rows[0] || null;
+    const row = result.rows[0] || null;
+    if (row) dualWrite.upsertSkillNode(row);
+    return row;
   } catch (error) {
     console.error('Error upserting skill node:', error);
     return null;
@@ -3332,7 +3639,8 @@ export async function getAllSkillNodes(): Promise<SkillNode[]> {
 
 export async function updateSkillNodePopularity(id: number, popularityScore: number): Promise<void> {
   try {
-    await pool.query('UPDATE skill_nodes SET popularity_score = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', [popularityScore, id]);
+    const result = await pool.query('UPDATE skill_nodes SET popularity_score = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING updated_at', [popularityScore, id]);
+    if (result.rows[0]) dualWrite.patchSkillNode(id, { popularity_score: popularityScore, updated_at: result.rows[0].updated_at });
   } catch (error) {
     console.error('Error updating skill node popularity:', error);
   }
@@ -3342,7 +3650,8 @@ export async function updateSkillNodePopularity(id: number, popularityScore: num
 // Additive to every skill_nodes function above; nothing here is read by Phase 0-3 code.
 export async function updateSkillNodeEmbedding(id: number, embedding: number[]): Promise<void> {
   try {
-    await pool.query('UPDATE skill_nodes SET embedding = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', [embedding, id]);
+    const result = await pool.query('UPDATE skill_nodes SET embedding = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING updated_at', [embedding, id]);
+    if (result.rows[0]) dualWrite.patchSkillNode(id, { embedding, updated_at: result.rows[0].updated_at });
   } catch (error) {
     console.error('Error updating skill node embedding:', error);
   }
@@ -3489,7 +3798,9 @@ export async function upsertSkillEdge(
        RETURNING *`,
       [fromSkillId, toSkillId, relationshipType, weight, source]
     );
-    return result.rows[0] || null;
+    const row = result.rows[0] || null;
+    if (row) dualWrite.upsertSkillEdge(row);
+    return row;
   } catch (error) {
     console.error('Error upserting skill edge:', error);
     return null;
@@ -3534,7 +3845,7 @@ export async function getSkillEdgesTo(skillId: number, relationshipType?: SkillR
 }
 
 // ==================== ROLE INTELLIGENCE PLATFORM (Phase 1) ====================
-// Not yet read by src/services.ts's live scoring - see src/matching/roleIntelligence.ts.
+// Not yet read by src/matching/services.ts's live scoring - see src/matching/roleIntelligence.ts.
 
 export async function upsertRoleProfile(profile: {
   role_key: string;
@@ -3574,7 +3885,9 @@ export async function upsertRoleProfile(profile: {
         profile.related_roles, profile.career_progression, profile.source ?? 'seed',
       ]
     );
-    return result.rows[0] || null;
+    const row = result.rows[0] || null;
+    if (row) dualWrite.upsertRoleProfile(row);
+    return row;
   } catch (error) {
     console.error('Error upserting role profile:', error);
     return null;
@@ -3603,7 +3916,8 @@ export async function getAllRoleProfiles(): Promise<RoleProfile[]> {
 
 export async function updateRoleProfileEmbedding(id: number, embedding: number[]): Promise<void> {
   try {
-    await pool.query('UPDATE role_profiles SET embedding = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', [embedding, id]);
+    const result = await pool.query('UPDATE role_profiles SET embedding = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING updated_at', [embedding, id]);
+    if (result.rows[0]) dualWrite.patchRoleProfile(id, { embedding, updated_at: result.rows[0].updated_at });
   } catch (error) {
     console.error('Error updating role profile embedding:', error);
   }
@@ -3657,7 +3971,9 @@ export async function upsertCareerTrajectory(input: {
         input.domain_concentration, JSON.stringify(input.domains), input.trajectory_embedding, JSON.stringify(input.predicted_next_roles),
       ]
     );
-    return result.rows[0] || null;
+    const row = result.rows[0] || null;
+    if (row) dualWrite.upsertCareerTrajectory(row);
+    return row;
   } catch (error) {
     console.error('Error upserting career trajectory:', error);
     return null;
@@ -3702,6 +4018,15 @@ export async function getAllCareerTrajectoriesForCompany(companyId: number): Pro
 // project_intelligence's single-JSONB-blob-per-subject pattern), so recomputation is a
 // transactional replace (delete every existing conclusion for the subject, insert the freshly
 // computed set) rather than a single-row upsert.
+
+// conclusion_confidence is a Postgres NUMERIC column - node-postgres returns NUMERIC as a JS
+// string, not a number, to avoid float precision loss (same root cause documented above for
+// swipes.match_score/action). Coerced here, once, at the query boundary, rather than at every
+// call site - found via Phase 10's explanation JSON actually surfacing the raw string value.
+function coerceReasoningConclusionRow(row: any): ReasoningConclusion {
+  return { ...row, conclusion_confidence: Number(row.conclusion_confidence) };
+}
+
 export async function replaceReasoningConclusions(
   subjectType: ConclusionSubjectType,
   subjectId: number,
@@ -3725,10 +4050,11 @@ export async function replaceReasoningConclusions(
           JSON.stringify(c.evidence_chain), c.conclusion_confidence, c.confidence_derivation, c.derived_from,
         ]
       );
-      inserted.push(result.rows[0]);
+      inserted.push(coerceReasoningConclusionRow(result.rows[0]));
     }
 
     await client.query('COMMIT');
+    dualWrite.replaceReasoningConclusions(subjectType, subjectId, inserted);
     return inserted;
   } catch (error) {
     await client.query('ROLLBACK');
@@ -3745,7 +4071,7 @@ export async function getReasoningConclusions(subjectType: ConclusionSubjectType
       'SELECT * FROM reasoning_conclusions WHERE subject_type = $1 AND subject_id = $2 ORDER BY conclusion_confidence DESC',
       [subjectType, subjectId]
     );
-    return result.rows;
+    return result.rows.map(coerceReasoningConclusionRow);
   } catch (error) {
     console.error('Error fetching reasoning conclusions:', error);
     return [];
@@ -3757,6 +4083,222 @@ export async function deleteReasoningConclusions(subjectType: ConclusionSubjectT
     await pool.query('DELETE FROM reasoning_conclusions WHERE subject_type = $1 AND subject_id = $2', [subjectType, subjectId]);
   } catch (error) {
     console.error('Error deleting reasoning conclusions:', error);
+  }
+}
+
+// ==================== PROFICIENCY WEIGHTING (Phase 11, SHADOW MODE ONLY) ====================
+// Append-only event log, same convention as swipes - one row per decision, never updated/
+// deleted/upserted. Never read by any live scoring path (see proficiencyWeighting.ts's module
+// doc) - insertProficiencyShadowScore/getProficiencyShadowScores exist purely so this data can be
+// analyzed later, ahead of any future, separate decision to wire this in live.
+export async function insertProficiencyShadowScore(input: {
+  company_id: number;
+  candidate_id: number;
+  job_id: number;
+  base_match_score: number;
+  proficiency_adjusted_score: number;
+  overall_multiplier: number;
+  skill_multipliers: unknown;
+  decision_action: number | null;
+  // Phase 12 - all null when the candidate has no computed career_trajectories row yet.
+  career_multiplier?: number | null;
+  career_progression_signal?: number | null;
+  career_stability_signal?: number | null;
+  career_domain_signal?: number | null;
+  career_adjusted_score?: number | null;
+  career_progression_type?: string | null;
+  // Phase 13 - all null when no matched skill has resolvable recency data.
+  recency_multiplier?: number | null;
+  recency_adjusted_score?: number | null;
+  recency_role_expectation?: string | null;
+  recency_skill_multipliers?: unknown;
+  // Phase 15 - all null when the candidate has no reasoning_conclusions rows yet.
+  reasoning_multiplier?: number | null;
+  reasoning_density_signal?: number | null;
+  reasoning_coverage_signal?: number | null;
+  reasoning_quality_signal?: number | null;
+  reasoning_adjusted_score?: number | null;
+  reasoning_covered_domains?: unknown;
+  reasoning_uncovered_domains?: unknown;
+}): Promise<void> {
+  try {
+    const careerMultiplier = input.career_multiplier ?? null;
+    const careerProgressionSignal = input.career_progression_signal ?? null;
+    const careerStabilitySignal = input.career_stability_signal ?? null;
+    const careerDomainSignal = input.career_domain_signal ?? null;
+    const careerAdjustedScore = input.career_adjusted_score ?? null;
+    const careerProgressionType = input.career_progression_type ?? null;
+    const recencyMultiplier = input.recency_multiplier ?? null;
+    const recencyAdjustedScore = input.recency_adjusted_score ?? null;
+    const recencyRoleExpectation = input.recency_role_expectation ?? null;
+    const recencySkillMultipliers = input.recency_skill_multipliers !== undefined ? input.recency_skill_multipliers : null;
+    const reasoningMultiplier = input.reasoning_multiplier ?? null;
+    const reasoningDensitySignal = input.reasoning_density_signal ?? null;
+    const reasoningCoverageSignal = input.reasoning_coverage_signal ?? null;
+    const reasoningQualitySignal = input.reasoning_quality_signal ?? null;
+    const reasoningAdjustedScore = input.reasoning_adjusted_score ?? null;
+    const reasoningCoveredDomains = input.reasoning_covered_domains !== undefined ? input.reasoning_covered_domains : null;
+    const reasoningUncoveredDomains = input.reasoning_uncovered_domains !== undefined ? input.reasoning_uncovered_domains : null;
+
+    const result = await pool.query(
+      `INSERT INTO proficiency_shadow_scores (
+         company_id, candidate_id, job_id, base_match_score, proficiency_adjusted_score,
+         overall_multiplier, skill_multipliers, decision_action, career_multiplier,
+         career_progression_signal, career_stability_signal, career_domain_signal,
+         career_adjusted_score, career_progression_type, recency_multiplier,
+         recency_adjusted_score, recency_role_expectation, recency_skill_multipliers,
+         reasoning_multiplier, reasoning_density_signal, reasoning_coverage_signal,
+         reasoning_quality_signal, reasoning_adjusted_score, reasoning_covered_domains,
+         reasoning_uncovered_domains
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
+       RETURNING id, computed_at`,
+      [
+        input.company_id, input.candidate_id, input.job_id, input.base_match_score,
+        input.proficiency_adjusted_score, input.overall_multiplier, JSON.stringify(input.skill_multipliers),
+        input.decision_action, careerMultiplier, careerProgressionSignal,
+        careerStabilitySignal, careerDomainSignal,
+        careerAdjustedScore, careerProgressionType,
+        recencyMultiplier, recencyAdjustedScore,
+        recencyRoleExpectation,
+        recencySkillMultipliers !== null ? JSON.stringify(recencySkillMultipliers) : null,
+        reasoningMultiplier, reasoningDensitySignal,
+        reasoningCoverageSignal, reasoningQualitySignal,
+        reasoningAdjustedScore,
+        reasoningCoveredDomains !== null ? JSON.stringify(reasoningCoveredDomains) : null,
+        reasoningUncoveredDomains !== null ? JSON.stringify(reasoningUncoveredDomains) : null,
+      ]
+    );
+
+    const returned = result.rows[0];
+    dualWrite.upsertProficiencyShadowScore({
+      id: returned.id,
+      company_id: input.company_id,
+      candidate_id: input.candidate_id,
+      job_id: input.job_id,
+      base_match_score: input.base_match_score,
+      proficiency_adjusted_score: input.proficiency_adjusted_score,
+      overall_multiplier: input.overall_multiplier,
+      skill_multipliers: input.skill_multipliers,
+      computed_at: returned.computed_at,
+      decision_action: input.decision_action,
+      career_multiplier: careerMultiplier,
+      career_progression_signal: careerProgressionSignal,
+      career_stability_signal: careerStabilitySignal,
+      career_domain_signal: careerDomainSignal,
+      career_adjusted_score: careerAdjustedScore,
+      career_progression_type: careerProgressionType,
+      recency_multiplier: recencyMultiplier,
+      recency_adjusted_score: recencyAdjustedScore,
+      recency_role_expectation: recencyRoleExpectation,
+      recency_skill_multipliers: recencySkillMultipliers,
+      reasoning_multiplier: reasoningMultiplier,
+      reasoning_density_signal: reasoningDensitySignal,
+      reasoning_coverage_signal: reasoningCoverageSignal,
+      reasoning_quality_signal: reasoningQualitySignal,
+      reasoning_adjusted_score: reasoningAdjustedScore,
+      reasoning_covered_domains: reasoningCoveredDomains,
+      reasoning_uncovered_domains: reasoningUncoveredDomains,
+    });
+  } catch (error) {
+    console.error('Error logging proficiency shadow score:', error);
+  }
+}
+
+function coerceProficiencyShadowScoreRow(row: any): ProficiencyShadowScore {
+  const n = (v: any): number | null => (v === null || v === undefined ? null : Number(v));
+  return {
+    ...row,
+    base_match_score: Number(row.base_match_score),
+    proficiency_adjusted_score: Number(row.proficiency_adjusted_score),
+    overall_multiplier: Number(row.overall_multiplier),
+    decision_action: n(row.decision_action),
+    career_multiplier: n(row.career_multiplier),
+    career_progression_signal: n(row.career_progression_signal),
+    career_stability_signal: n(row.career_stability_signal),
+    career_domain_signal: n(row.career_domain_signal),
+    career_adjusted_score: n(row.career_adjusted_score),
+    recency_multiplier: n(row.recency_multiplier),
+    recency_adjusted_score: n(row.recency_adjusted_score),
+    reasoning_multiplier: n(row.reasoning_multiplier),
+    reasoning_adjusted_score: n(row.reasoning_adjusted_score),
+    reasoning_coverage_signal: n(row.reasoning_coverage_signal),
+  };
+}
+
+export async function getProficiencyShadowScores(companyId: number, candidateId: number, jobId: number): Promise<ProficiencyShadowScore[]> {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM proficiency_shadow_scores WHERE company_id = $1 AND candidate_id = $2 AND job_id = $3 ORDER BY computed_at DESC',
+      [companyId, candidateId, jobId]
+    );
+    return result.rows.map(coerceProficiencyShadowScoreRow);
+  } catch (error) {
+    console.error('Error fetching proficiency shadow scores:', error);
+    return [];
+  }
+}
+
+// All shadow scores for a company - the analytics surface (proficiencyAnalytics.ts) needs the
+// full set, not scoped to one candidate/job pair.
+export async function getAllProficiencyShadowScoresForCompany(companyId: number): Promise<ProficiencyShadowScore[]> {
+  try {
+    const result = await pool.query('SELECT * FROM proficiency_shadow_scores WHERE company_id = $1 ORDER BY computed_at DESC', [companyId]);
+    return result.rows.map(coerceProficiencyShadowScoreRow);
+  } catch (error) {
+    console.error('Error fetching all proficiency shadow scores for company:', error);
+    return [];
+  }
+}
+
+// ==================== BGE RETRIEVAL SHADOW COMPARISON (SHADOW MODE ONLY) ====================
+// Append-only, same convention as swipes/proficiency_shadow_scores. Never read by any live
+// ranking/scoring path - see bgeShadowRetrieval.ts's module doc.
+export async function insertBgeRetrievalShadowComparison(input: {
+  company_id: number;
+  job_id: number;
+  pool_size: number;
+  existing_ranking: RankingEntry[];
+  bge_ranking: RankingEntry[] | null;
+  top10_overlap_count: number | null;
+  top10_overlap_pct: number | null;
+  rank_correlation: number | null;
+  bge_available: boolean;
+  embed_latency_ms: number | null;
+  rerank_latency_ms: number | null;
+}): Promise<void> {
+  try {
+    await pool.query(
+      `INSERT INTO bge_retrieval_shadow_comparisons (
+         company_id, job_id, pool_size, existing_ranking, bge_ranking, top10_overlap_count,
+         top10_overlap_pct, rank_correlation, bge_available, embed_latency_ms, rerank_latency_ms
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      [
+        input.company_id, input.job_id, input.pool_size, JSON.stringify(input.existing_ranking),
+        input.bge_ranking !== null ? JSON.stringify(input.bge_ranking) : null,
+        input.top10_overlap_count, input.top10_overlap_pct, input.rank_correlation,
+        input.bge_available, input.embed_latency_ms, input.rerank_latency_ms,
+      ]
+    );
+  } catch (error) {
+    console.error('Error logging BGE retrieval shadow comparison:', error);
+  }
+}
+
+export async function getBgeRetrievalShadowComparisons(companyId: number, jobId?: number): Promise<BgeRetrievalShadowComparison[]> {
+  try {
+    const result = jobId
+      ? await pool.query('SELECT * FROM bge_retrieval_shadow_comparisons WHERE company_id = $1 AND job_id = $2 ORDER BY computed_at DESC', [companyId, jobId])
+      : await pool.query('SELECT * FROM bge_retrieval_shadow_comparisons WHERE company_id = $1 ORDER BY computed_at DESC', [companyId]);
+    return result.rows.map((row) => ({
+      ...row,
+      top10_overlap_pct: row.top10_overlap_pct === null ? null : Number(row.top10_overlap_pct),
+      rank_correlation: row.rank_correlation === null ? null : Number(row.rank_correlation),
+      embed_latency_ms: row.embed_latency_ms === null ? null : Number(row.embed_latency_ms),
+      rerank_latency_ms: row.rerank_latency_ms === null ? null : Number(row.rerank_latency_ms),
+    }));
+  } catch (error) {
+    console.error('Error fetching BGE retrieval shadow comparisons:', error);
+    return [];
   }
 }
 
@@ -3774,8 +4316,8 @@ export async function getLatestModelVersion(): Promise<ModelVersion | null> {
 export async function saveModelVersion(version: Omit<ModelVersion, 'id'>): Promise<ModelVersion | null> {
   try {
     const result = await pool.query(
-      `INSERT INTO model_versions (version, accuracy, training_examples, trained_at, is_active) 
-       VALUES ($1, $2, $3, $4, $5) 
+      `INSERT INTO model_versions (version, accuracy, training_examples, trained_at, is_active)
+       VALUES ($1, $2, $3, $4, $5)
        RETURNING *`,
       [version.version, version.accuracy, version.training_examples, version.trained_at, version.is_active]
     );
@@ -3784,6 +4326,28 @@ export async function saveModelVersion(version: Omit<ModelVersion, 'id'>): Promi
     console.error('Error saving model version:', error);
     return null;
   }
+}
+
+// Microservices Migration, Batch 23 - persists the active scoring model type (previously
+// in-memory-only in src/matching/services.ts, see that file's `activeModelType` binding). Single
+// row (id = 1), read once at startup and on every explicit change - never on the scoring hot path
+// itself, which keeps reading the in-memory binding directly for zero added latency.
+export async function getMatchingModelConfig(): Promise<'heuristic' | 'ml_tree' | 'random_forest' | 'hybrid_weighted'> {
+  try {
+    const result = await pool.query('SELECT active_model_type FROM matching_model_config WHERE id = 1');
+    return result.rows[0]?.active_model_type ?? 'random_forest';
+  } catch (error) {
+    console.error('Error fetching matching model config:', error);
+    return 'random_forest';
+  }
+}
+
+export async function setMatchingModelConfig(modelType: 'heuristic' | 'ml_tree' | 'random_forest' | 'hybrid_weighted'): Promise<void> {
+  await pool.query(
+    `INSERT INTO matching_model_config (id, active_model_type, updated_at) VALUES (1, $1, NOW())
+     ON CONFLICT (id) DO UPDATE SET active_model_type = $1, updated_at = NOW()`,
+    [modelType]
+  );
 }
 
 // DAILY STATS
@@ -3817,10 +4381,15 @@ export async function updateDailyStats(recruiterId: number, date: string, update
 // REFRESH TOKEN SESSIONS
 export async function createRefreshToken(params: { userId: number; tokenHash: string; userAgent?: string | null; ip?: string | null; expiresAt: Date; remember?: boolean }): Promise<void> {
   try {
-    await pool.query(
-      `INSERT INTO refresh_tokens (user_id, token_hash, user_agent, ip_address, expires_at, remember) VALUES ($1, $2, $3, $4, $5, $6)`,
+    const result = await pool.query(
+      `INSERT INTO refresh_tokens (user_id, token_hash, user_agent, ip_address, expires_at, remember) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, created_at`,
       [params.userId, params.tokenHash, params.userAgent || null, params.ip || null, params.expiresAt, params.remember !== false]
     );
+    const row = result.rows[0];
+    dualWrite.upsertRefreshToken({
+      id: row.id, user_id: params.userId, token_hash: params.tokenHash, user_agent: params.userAgent || null,
+      ip_address: params.ip || null, created_at: row.created_at, expires_at: params.expiresAt, revoked_at: null, remember: params.remember !== false,
+    });
   } catch (error) {
     console.error('Error creating refresh token:', error);
     throw error;
@@ -3839,7 +4408,8 @@ export async function findRefreshTokenByHash(tokenHash: string): Promise<any | n
 
 export async function revokeRefreshTokenByHash(tokenHash: string): Promise<void> {
   try {
-    await pool.query('UPDATE refresh_tokens SET revoked_at = CURRENT_TIMESTAMP WHERE token_hash = $1 AND revoked_at IS NULL', [tokenHash]);
+    const result = await pool.query('UPDATE refresh_tokens SET revoked_at = CURRENT_TIMESTAMP WHERE token_hash = $1 AND revoked_at IS NULL RETURNING id, revoked_at', [tokenHash]);
+    if (result.rows.length > 0) dualWrite.revokeRefreshTokens(result.rows);
   } catch (error) {
     console.error('Error revoking refresh token:', error);
   }
@@ -3847,7 +4417,8 @@ export async function revokeRefreshTokenByHash(tokenHash: string): Promise<void>
 
 export async function revokeAllRefreshTokensForUser(userId: number): Promise<void> {
   try {
-    await pool.query('UPDATE refresh_tokens SET revoked_at = CURRENT_TIMESTAMP WHERE user_id = $1 AND revoked_at IS NULL', [userId]);
+    const result = await pool.query('UPDATE refresh_tokens SET revoked_at = CURRENT_TIMESTAMP WHERE user_id = $1 AND revoked_at IS NULL RETURNING id, revoked_at', [userId]);
+    if (result.rows.length > 0) dualWrite.revokeRefreshTokens(result.rows);
   } catch (error) {
     console.error('Error revoking all refresh tokens for user:', error);
   }
@@ -3960,11 +4531,63 @@ export async function deleteJob(jobId: number, companyId: number): Promise<boole
     const result = await client.query('DELETE FROM jobs WHERE id = $1 AND company_id = $2', [jobId, companyId]);
 
     await client.query('COMMIT');
-    return (result.rowCount ?? 0) > 0;
+    const deleted = (result.rowCount ?? 0) > 0;
+    if (deleted) dualWrite.deleteJobMirror(jobId);
+    return deleted;
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Error deleting job:', error);
     return false;
+  } finally {
+    client.release();
+  }
+}
+
+// ==================== reverse mirror (write-cutover completion plan, Phase B) ====================
+// Job Service is now the write-authority for `jobs` (its own real INSERT/UPDATE/DELETE, its own
+// sequence assigns new ids) - these two functions are the reverse of this file's own existing
+// dualWrite.upsertJob/deleteJobMirror: they keep THIS table (the monolith's own copy) fresh
+// instead, by explicit id, so recruiter-review.routes.ts's list/detail views (staying
+// monolith-local, reading this table directly) keep seeing real data. Called from src/api/
+// job-internal.routes.ts's new mirror-and-notify/mirror-delete endpoints. mirrorDeleteJob
+// replicates the exact same match_scores/swipes/reasoning_conclusions cleanup transaction
+// deleteJob above always ran - those tables still live here (or in other services not touched by
+// this cutover), so the cleanup has to keep happening even though Job Service now owns the
+// primary delete.
+const JOB_MIRROR_COLUMNS = [
+  'id', 'company_id', 'title', 'description', 'required_skills', 'experience_years', 'location',
+  'salary_min', 'salary_max', 'status', 'optional_skills', 'min_experience', 'max_experience',
+  'experience_unit', 'remote_type', 'employment_type', 'industry', 'department', 'education',
+  'certifications', 'salary_currency', 'notice_period', 'number_of_openings', 'required_languages',
+  'responsibilities', 'tech_stack', 'keywords', 'job_summary', 'source_raw_text', 'parse_confidence',
+  'description_embedding',
+];
+const JOB_MIRROR_JSON_COLUMNS = new Set(['tech_stack', 'parse_confidence']);
+
+export async function mirrorUpsertJob(row: Record<string, unknown>): Promise<void> {
+  const columns = JOB_MIRROR_COLUMNS.filter((c) => c in row);
+  const values = columns.map((c) => (JOB_MIRROR_JSON_COLUMNS.has(c) && row[c] !== null && row[c] !== undefined ? JSON.stringify(row[c]) : row[c]));
+  const placeholders = columns.map((_, i) => `$${i + 1}`).join(', ');
+  const updateSet = columns.filter((c) => c !== 'id').map((c) => `${c} = EXCLUDED.${c}`).join(', ');
+  await pool.query(
+    `INSERT INTO jobs (${columns.join(', ')}) VALUES (${placeholders})
+     ON CONFLICT (id) DO UPDATE SET ${updateSet}`,
+    values
+  );
+}
+
+export async function mirrorDeleteJob(jobId: number, companyId: number): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('DELETE FROM match_scores WHERE job_id = $1 AND company_id = $2', [jobId, companyId]);
+    await client.query('DELETE FROM swipes WHERE job_id = $1 AND company_id = $2', [jobId, companyId]);
+    await client.query('DELETE FROM reasoning_conclusions WHERE subject_type = $1 AND subject_id = $2', ['job', jobId]);
+    await client.query('DELETE FROM jobs WHERE id = $1 AND company_id = $2', [jobId, companyId]);
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
   } finally {
     client.release();
   }
@@ -4285,11 +4908,15 @@ export const db = {
   createCandidate,
   updateCandidate,
   deleteCandidate,
+  mirrorUpsertCandidate,
+  mirrorDeleteCandidate,
   getJobs,
   getJobById,
   createJob,
   updateJob,
   deleteJob,
+  mirrorUpsertJob,
+  mirrorDeleteJob,
   updateJobStatus,
   updateJobEmbedding,
   upsertKnowledgeChunk,
@@ -4300,6 +4927,9 @@ export const db = {
   getSwipesByJobId,
   getSwipesByRecruiterId,
   recordSwipe,
+  mirrorUpsertSwipe,
+  mirrorUpsertRecruiterNote,
+  mirrorUpsertDetailedScoringReport,
   getAllSwipesUnscoped,
   getAllCandidatesUnscoped,
   getAllJobsUnscoped,
@@ -4386,12 +5016,19 @@ export const db = {
   replaceReasoningConclusions,
   getReasoningConclusions,
   deleteReasoningConclusions,
+  insertProficiencyShadowScore,
+  getProficiencyShadowScores,
+  getAllProficiencyShadowScoresForCompany,
+  insertBgeRetrievalShadowComparison,
+  getBgeRetrievalShadowComparisons,
   upsertRoleProfile,
   getRoleProfileByKey,
   getAllRoleProfiles,
   updateRoleProfileEmbedding,
   getLatestModelVersion,
   saveModelVersion,
+  getMatchingModelConfig,
+  setMatchingModelConfig,
   getDailyStats,
   updateDailyStats,
   healthCheck,

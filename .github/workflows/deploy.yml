@@ -1,0 +1,125 @@
+name: Build and Deploy Tier 0
+
+# Build+push runs automatically on main (safe - only produces images in ECR, deploys nothing).
+# The actual cluster deploy is gated behind the `production` GitHub Environment, which must have
+# required reviewers configured (Settings -> Environments -> production -> Required reviewers) -
+# that's a one-time repo setting, not expressible in this file, and is the actual manual-approval
+# gate: this workflow will pause and wait for a human to click Approve before the deploy job runs,
+# no matter how it was triggered.
+#
+# This workflow cannot succeed until terraform/ has actually been applied (real ECR repos and an
+# EKS cluster must exist) and the repo secrets/variables below are configured from its outputs -
+# see the "Required repo configuration" section below. Until then, expect it to fail at the AWS
+# auth step, which is the correct, safe behavior for an unconfigured environment - not a bug.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "identity-service/**"
+      - "platform-governance-service/**"
+      - "tenant-directory-service/**"
+      - "api-gateway/**"
+      - "jd-parser-service/**"
+      - "candidate-service/**"
+      - "chat-service/**"
+      - "resume-service/**"
+      - "recruiting-service/**"
+      - "analytics-service/**"
+      - "matching-evaluation-service/**"
+      - "matching-reasoning-service/**"
+      - "matching-skill-discovery-service/**"
+      - "matching-bge-shadow-service/**"
+      - "role-intelligence-service/**"
+      - "career-intelligence-service/**"
+      - "dynamic-weighting-service/**"
+      - "job-service/**"
+      - "candidate-core-service/**"
+      - "matching-decision-service/**"
+      - "matching-scoring-service/**"
+      - "helm/**"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: "Also run the deploy job (otherwise this just builds and pushes images)"
+        type: boolean
+        default: false
+
+# Required repo configuration (from `terraform output` after a real apply - see terraform/README.md):
+#   Repo variable AWS_ROLE_ARN          <- terraform output github_actions_role_arn
+#   Repo variable AWS_REGION            <- ap-south-1 (or your var.aws_region)
+#   Repo variable EKS_CLUSTER_NAME      <- terraform output cluster_name
+#   Repo variable ECR_REGISTRY          <- the account/registry prefix common to all 4 repo URLs
+
+permissions:
+  id-token: write # required for aws-actions/configure-aws-credentials's OIDC federation
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+
+jobs:
+  build-and-push:
+    name: Build & push ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [identity-service, platform-governance-service, tenant-directory-service, api-gateway, jd-parser-service, candidate-service, chat-service, resume-service, recruiting-service, analytics-service, matching-evaluation-service, matching-reasoning-service, matching-skill-discovery-service, matching-bge-shadow-service, role-intelligence-service, career-intelligence-service, dynamic-weighting-service, job-service, candidate-core-service, matching-decision-service, matching-scoring-service]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: ecr
+
+      - name: Build and push
+        working-directory: ${{ matrix.service }}
+        env:
+          IMAGE: ${{ steps.ecr.outputs.registry }}/tejoma-${{ matrix.service }}:${{ github.sha }}
+        run: |
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+
+  deploy:
+    name: Deploy to EKS
+    needs: build-and-push
+    if: github.event_name == 'push' || inputs.deploy
+    runs-on: ubuntu-latest
+    environment: production # <- the manual-approval gate; see the header comment
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Configure kubectl
+        run: aws eks update-kubeconfig --region "${{ env.AWS_REGION }}" --name "${{ vars.EKS_CLUSTER_NAME }}"
+
+      - uses: azure/setup-helm@v4
+
+      - name: helm upgrade --install (each service)
+        run: |
+          set -euo pipefail
+          for svc in identity-service platform-governance-service tenant-directory-service api-gateway jd-parser-service candidate-service chat-service resume-service recruiting-service analytics-service matching-evaluation-service matching-reasoning-service matching-skill-discovery-service matching-bge-shadow-service role-intelligence-service career-intelligence-service dynamic-weighting-service job-service candidate-core-service matching-decision-service matching-scoring-service; do
+            helm upgrade --install "$svc" "helm/$svc" \
+              --namespace tejoma --create-namespace \
+              --set image.repository="${{ vars.ECR_REGISTRY }}/tejoma-$svc" \
+              --set image.tag="${{ github.sha }}" \
+              --wait --timeout 5m
+          done
+
+      - name: Verify rollout
+        run: |
+          set -euo pipefail
+          for svc in identity-service platform-governance-service tenant-directory-service api-gateway jd-parser-service candidate-service chat-service resume-service recruiting-service analytics-service matching-evaluation-service matching-reasoning-service matching-skill-discovery-service matching-bge-shadow-service role-intelligence-service career-intelligence-service dynamic-weighting-service job-service candidate-core-service matching-decision-service matching-scoring-service; do
+            kubectl rollout status "deployment/$svc-$svc" -n tejoma --timeout=120s
+          done

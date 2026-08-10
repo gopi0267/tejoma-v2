@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { calculateMatchScoresForJobsBatch, calculateMatchScoresBatch, setActiveModelType } from '../../src/services.js';
+import { calculateMatchScoresForJobsBatch, calculateMatchScoresBatch, setActiveModelType } from '../../src/matching/services.js';
 import type { Candidate, Job } from '../../src/types.js';
 
 // Enterprise AI Matching Architecture, Phase 0 - "Unified Matching API across all four surfaces".

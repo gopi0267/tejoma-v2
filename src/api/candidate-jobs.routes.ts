@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { db } from '../db.js';
 import { requireCandidateAuth } from '../middleware/auth.middleware.js';
 import { rankJobsForCandidate, toSyntheticCandidateFromAccount } from '../matching/matchingApi.js';
+import { computeCandidateMatchExplanation } from '../matching/explainability/computeExplanation.js';
 import type { Job, CandidateAccount } from '../types.js';
 
 const router = Router();
@@ -72,6 +73,33 @@ router.get('/candidate-jobs/:id', requireCandidateAuth, async (req, res) => {
   } catch (error) {
     console.error('Candidate job detail error:', error);
     res.status(500).json({ error: 'Failed to load job' });
+  }
+});
+
+// ==================== MATCH EXPLANATION ====================
+// Enterprise AI Matching Architecture, Phase 10 - Explainability Layer, candidate-facing surface.
+// Deliberately narrower than the recruiter-facing one (see computeExplanation.ts's doc comment):
+// no match_score, no seniority/career/reasoning-layer data, since none of that exists on this
+// candidate_accounts-based scoring path.
+router.get('/candidate-jobs/:id/explanation', requireCandidateAuth, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) {
+      return res.status(400).json({ error: 'Invalid job id' });
+    }
+    const job = await db.getOpenJobByIdPublic(id);
+    if (!job) {
+      return res.status(404).json({ error: 'Job not found' });
+    }
+    const account = await db.getCandidateAccountById(req.candidate!.candidate_id);
+    if (!account) {
+      return res.status(404).json({ error: 'Candidate account not found' });
+    }
+    const explanation = await computeCandidateMatchExplanation(account, job as unknown as Job);
+    res.json(explanation);
+  } catch (error) {
+    console.error('Candidate job explanation error:', error);
+    res.status(500).json({ error: 'Failed to load match explanation' });
   }
 });
 

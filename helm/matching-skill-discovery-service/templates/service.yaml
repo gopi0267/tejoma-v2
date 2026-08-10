@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "matching-skill-discovery-service.fullname" . }}
+  labels:
+    {{- include "matching-skill-discovery-service.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: {{ .Values.service.targetPort }}
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "matching-skill-discovery-service.selectorLabels" . | nindent 4 }}

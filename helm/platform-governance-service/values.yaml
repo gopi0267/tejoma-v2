@@ -1,0 +1,76 @@
+# Default values for platform-governance-service. See helm/identity-service/values.yaml's header
+# comment for the two supported ways to supply secrets - identical pattern, applied here.
+
+replicaCount: 2
+
+image:
+  repository: ""  # e.g. <account-id>.dkr.ecr.ap-south-1.amazonaws.com/tejoma-platform-governance-service
+  tag: ""
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 4002
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+
+probes:
+  liveness:
+    path: /live
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+  readiness:
+    path: /ready
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+terminationGracePeriodSeconds: 30
+preStopSleepSeconds: 5
+
+config:
+  NODE_ENV: production
+  LOG_LEVEL: info
+  DB_HOST: ""
+  DB_PORT: "5432"
+  DB_NAME: tejoma_platform_governance
+  DB_USER: platform_governance_service
+  FRONTEND_URL: ""
+  # Required (not graceful-null) - this service cannot verify any staff JWT without it. See
+  # platform-governance-service/src/config/env.ts's header comment.
+  IDENTITY_SERVICE_URL: "http://identity-service.tejoma.svc.cluster.local"
+  TENANT_DIRECTORY_SERVICE_URL: "http://tenant-directory-service.tejoma.svc.cluster.local"
+
+existingSecret: ""
+secrets:
+  DB_PASSWORD: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "4002"
+  prometheus.io/path: /metrics
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: api-gateway
+description: Tejoma API Gateway - Tier 0 (Phase 11/12). The single public entry point.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

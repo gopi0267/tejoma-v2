@@ -1,0 +1,6 @@
+apiVersion: v2
+name: role-intelligence-service
+description: Tejoma Role Intelligence Service - Tier 0 (Batch 29). Owns a dual-written mirror of role_profiles and the read-only role-resolution logic (matchRoleByTitle) - the fifth extracted slice of the Matching domain.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

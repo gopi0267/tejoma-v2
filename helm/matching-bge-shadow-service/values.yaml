@@ -1,0 +1,75 @@
+# Default values for matching-bge-shadow-service. See helm/identity-service/values.yaml's header
+# comment for the two supported ways to supply secrets - identical pattern, applied here (though
+# this service currently has no secrets of its own - DB_PASSWORD only).
+
+replicaCount: 2
+
+image:
+  repository: ""  # e.g. <account-id>.dkr.ecr.ap-south-1.amazonaws.com/tejoma-matching-bge-shadow-service
+  tag: ""
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 4014
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+
+probes:
+  liveness:
+    path: /live
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+  readiness:
+    path: /ready
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+terminationGracePeriodSeconds: 30
+preStopSleepSeconds: 5
+
+config:
+  NODE_ENV: production
+  LOG_LEVEL: info
+  DB_HOST: ""
+  DB_PORT: "5432"
+  DB_NAME: tejoma_matching_bge_shadow
+  DB_USER: matching_bge_shadow_service
+  # Optional - the Python BGE-M3/BGE-Reranker-v2-m3 service, called directly (not through the
+  # monolith). Gracefully degrades (bgeAvailable: false) when unreachable.
+  BGE_SERVICE_URL: ""
+
+existingSecret: ""
+secrets:
+  DB_PASSWORD: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "4014"
+  prometheus.io/path: /metrics
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

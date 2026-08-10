@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeMatchFeatures } from '../../src/services.js';
+import { computeMatchFeatures } from '../../src/matching/services.js';
 import type { Candidate, Job } from '../../src/types.js';
 
 function makeCandidate(overrides: Partial<Candidate> = {}): Candidate {

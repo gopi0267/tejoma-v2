@@ -52,3 +52,21 @@ if (!IS_PRODUCTION && (!process.env.JWT_SECRET || process.env.JWT_SECRET === DEV
 if (warnings.length > 0) {
   console.warn('\n⚠ Configuration warnings:\n' + warnings.map((w) => `  - ${w}`).join('\n') + '\n');
 }
+
+// ============================================================
+// Phase 1 Microservices - Feature Flags
+// Default: false (routes stay on monolith) for safe gradual rollout
+// ============================================================
+
+export const UPLOAD_SERVICE_ENABLED = process.env.UPLOAD_SERVICE_ENABLED === 'true';
+export const RESUME_SERVICE_ENABLED = process.env.RESUME_SERVICE_ENABLED === 'true';
+export const NOTIFICATIONS_SERVICE_ENABLED = process.env.NOTIFICATIONS_SERVICE_ENABLED === 'true';
+export const DUAL_WRITE_ENABLED = process.env.DUAL_WRITE_ENABLED === 'true';
+
+// ============================================================
+// Microservice URLs
+// ============================================================
+
+export const UPLOAD_SERVICE_URL = process.env.UPLOAD_SERVICE_URL || 'http://localhost:4030';
+export const RESUME_SERVICE_URL = process.env.RESUME_SERVICE_URL || 'http://localhost:4031';
+export const NOTIFICATIONS_SERVICE_URL = process.env.NOTIFICATIONS_SERVICE_URL || 'http://localhost:4032';

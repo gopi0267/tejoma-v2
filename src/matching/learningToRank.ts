@@ -25,7 +25,7 @@
 
 import { db } from '../db.js';
 import { logger } from '../utils/logger.js';
-import { calculateMatchScoresBatch } from '../services.js';
+import { calculateMatchScoresBatch } from './services.js';
 import { trainRanking, type RankingGroup } from '../algorithms/ltr-models.js';
 import type { Candidate, Swipe } from '../types.js';
 

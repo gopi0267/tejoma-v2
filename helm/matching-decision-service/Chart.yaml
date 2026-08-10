@@ -1,0 +1,6 @@
+apiVersion: v2
+name: matching-decision-service
+description: Tejoma Matching Decision Service - Tier 0. Gateway-routed, staff-facing (Remaining-monolith migration, Step 6). GET /api/matches/queue/:job_id, POST /api/matches/score, and GET /api/swipes/history|stats are real cutovers, fusing this service's own swipes mirror with job-service, candidate-core-service, and matching-scoring-service. POST /api/swipes and every /api/recruiter-review* route proxy to the monolith, which remains the sole writer.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
