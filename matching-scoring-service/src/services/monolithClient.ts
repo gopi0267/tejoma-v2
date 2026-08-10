@@ -1,10 +1,12 @@
 /**
  * HTTP client for the monolith's /internal/matching-scoring/* API
- * (src/api/matching-scoring-internal.routes.ts) - the ML admin surface (/ml/config, /ml/train,
- * /ml/model/status, /ml/model/versions) delegates its actual state to the monolith's
- * activeModelType/trainModelOnStartup (see config/env.ts's header comment for why). Same shape as
- * recruiting-service's own monolithClient.ts - the network call and basic latency/outcome metrics
- * only, never re-deriving what the monolith already computed.
+ * (src/api/matching-scoring-internal.routes.ts) - minimal client for batch training only.
+ *
+ * Phase D Item 5 COMPLETE: ML admin state (activeModelType, isRetrainingInProgress,
+ * lastTrainingTimestamp) is now owned locally by matching-scoring-service (src/matching/services.ts).
+ * mlAdmin.routes.ts reads/writes local state, not monolith.
+ *
+ * ONLY trainModel() proxies to monolith (batch job needing cross-service data reads).
  */
 import { MONOLITH_INTERNAL_URL } from '../config/env.js';
 import { logger } from '../utils/logger.js';
@@ -50,42 +52,18 @@ async function call<T>(target: string, path: string, init: RequestInit = {}, tim
   }
 }
 
-export interface ModelConfig {
+export interface TrainResult {
+  success: boolean;
   activeModelType: string;
   isRetrainingInProgress: boolean;
   lastTrainingTimestamp: string;
-}
-
-export interface TrainResult extends ModelConfig {
-  success: boolean;
   ensembleTrained: boolean;
   trainedSampleCount: number;
 }
 
-export interface ModelStatus {
-  ensemble_trained: boolean;
-  trained_sample_count: number;
-  total_swipes_available: number;
-  last_trained: string;
-  ml_service_reachable: boolean;
-}
-
-export function getModelConfig(): Promise<ModelConfig> {
-  return call('model-config', '/model-config');
-}
-
-export function setModelConfig(activeModelType: string): Promise<ModelConfig> {
-  return call('model-config', '/model-config', { method: 'POST', body: JSON.stringify({ activeModelType }) });
-}
+// Phase D Item 5: getModelConfig/setModelConfig removed (local state owned by matching-scoring-service)
+// Only trainModel remains (batch job with cross-service dependencies)
 
 export function trainModel(): Promise<TrainResult> {
   return call('train', '/train', { method: 'POST' }, TRAIN_REQUEST_TIMEOUT_MS);
-}
-
-export function getModelStatus(): Promise<ModelStatus> {
-  return call('model-status', '/model-status');
-}
-
-export function getModelVersions(): Promise<unknown[]> {
-  return call('model-versions', '/model-versions');
 }
