@@ -1,0 +1,44 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tejoma-config
+  namespace: tejoma
+data:
+  # ==================== DATABASE CONFIG ====================
+  DB_HOST: "postgres.tejoma.svc.cluster.local"
+  DB_PORT: "5432"
+  DB_USER: "postgres"
+  # DB_PASSWORD: use Secret instead
+  # DB_NAME: per-service (see service-specific deployments)
+
+  # ==================== MICROSERVICE URLS ====================
+  API_GATEWAY_URL: "http://api-gateway.tejoma.svc.cluster.local:4000"
+  MONOLITH_INTERNAL_URL: "http://monolith.tejoma.svc.cluster.local:3006"
+  IDENTITY_SERVICE_URL: "http://identity-service.tejoma.svc.cluster.local:4017"
+  JOB_SERVICE_URL: "http://job-service.tejoma.svc.cluster.local:4018"
+  CANDIDATE_CORE_SERVICE_URL: "http://candidate-core-service.tejoma.svc.cluster.local:4019"
+  MATCHING_DECISION_SERVICE_URL: "http://matching-decision-service.tejoma.svc.cluster.local:4020"
+  MATCHING_SCORING_SERVICE_URL: "http://matching-scoring-service.tejoma.svc.cluster.local:4021"
+  MATCHING_EVALUATION_SERVICE_URL: "http://matching-evaluation-service.tejoma.svc.cluster.local:4023"
+  MATCHING_REASONING_SERVICE_URL: "http://matching-reasoning-service.tejoma.svc.cluster.local:4024"
+
+  # ==================== PHASE D CUTOVER FLAGS ====================
+  # Gradual migration from monolith to microservices
+  CAREER_TRAJECTORIES_CUTOVER_ENABLED: "true"
+  REASONING_CONCLUSIONS_CUTOVER_ENABLED: "true"
+  RAG_INDEXING_CUTOVER_ENABLED: "false"
+  DUAL_WRITE_ENABLED: "false"
+
+  # ==================== FEATURE FLAGS ====================
+  SHADOW_SCORING_ENABLED: "true"
+  UPLOAD_SERVICE_ENABLED: "false"
+  RESUME_SERVICE_ENABLED: "false"
+  NOTIFICATIONS_SERVICE_ENABLED: "false"
+
+  # ==================== LOGGING ====================
+  LOG_LEVEL: "info"
+  NODE_ENV: "production"
+
+  # ==================== REDIS ====================
+  REDIS_HOST: "redis.tejoma.svc.cluster.local"
+  REDIS_PORT: "6379"

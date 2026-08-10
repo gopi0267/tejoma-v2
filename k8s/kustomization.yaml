@@ -1,0 +1,47 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: tejoma-microservices
+
+namespace: tejoma
+
+# All resources managed under this namespace
+commonLabels:
+  app.kubernetes.io/managed-by: tejoma-migration
+  app.kubernetes.io/version: "1.0.0"
+
+# Base resources for all services
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - services/
+
+# ConfigMap generator for environment variables
+configMapGenerator:
+  - name: tejoma-config
+    envs:
+      - config.env
+
+# Replicas for each service (can be overridden)
+replicas:
+  - name: api-gateway
+    count: 3
+  - name: monolith
+    count: 2
+  - name: matching-reasoning-service
+    count: 2
+  - name: matching-evaluation-service
+    count: 2
+  - name: chat-service
+    count: 2
+  - name: job-service
+    count: 2
+  - name: candidate-core-service
+    count: 2
+
+# Common labels
+labels:
+  - pairs:
+      environment: production
+      tier: microservice
