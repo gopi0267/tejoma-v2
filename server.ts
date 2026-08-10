@@ -14,7 +14,6 @@ import { registerApiRoutes } from './src/api/index.js';
 import candidateInternalRoutes from './src/api/candidate-internal.routes.js';
 import chatInternalRoutes from './src/api/chat-internal.routes.js';
 import resumeInternalRoutes from './src/api/resume-internal.routes.js';
-import recruitingInternalRoutes from './src/api/recruiting-internal.routes.js';
 import analyticsInternalRoutes from './src/api/analytics-internal.routes.js';
 import matchingEvaluationInternalRoutes from './src/api/matching-evaluation-internal.routes.js';
 import skillDiscoveryInternalRoutes from './src/api/skill-discovery-internal.routes.js';
@@ -129,9 +128,8 @@ app.use('/internal/chat', chatInternalRoutes);
 // Resume Service (Batch 18) internal API - same network-boundary trust model as above. See
 // src/api/resume-internal.routes.ts's header comment.
 app.use('/internal/resume', resumeInternalRoutes);
-// Recruiting Service (Batch 19) internal API - same network-boundary trust model as above. See
-// src/api/recruiting-internal.routes.ts's header comment.
-app.use('/internal/recruiting', recruitingInternalRoutes);
+// Recruiting Service (Batch 19) - now fully migrated: owns its own matches orchestration.
+// /internal/recruiting endpoint removed - no longer needed as recruiting-service cutover is complete.
 // Analytics Service (Batch 22) internal API - same network-boundary trust model as above. See
 // src/api/analytics-internal.routes.ts's header comment.
 app.use('/internal/analytics', analyticsInternalRoutes);
