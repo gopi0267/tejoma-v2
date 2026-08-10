@@ -17,7 +17,7 @@
  */
 import { Router } from 'express';
 import { computeReasoningForCandidate, computeReasoningForJob } from '../matching/reasoning/computeReasoning.js';
-import { replaceCareerTrajectory } from '../db.js';
+import { replaceCareerTrajectory, getCareerTrajectory } from '../db.js';
 
 const router = Router();
 
@@ -61,6 +61,24 @@ router.post('/career-trajectory/replace', async (req, res) => {
   } catch (error) {
     console.error('[internal] replace career trajectory error:', error);
     res.status(500).json({ error: 'Failed to replace career trajectory' });
+  }
+});
+
+// Item 10: GET career trajectory for explainability
+router.get('/career-trajectory', async (req, res) => {
+  try {
+    const { candidateId } = req.query;
+    if (!candidateId) {
+      return res.status(400).json({ error: 'candidateId is required' });
+    }
+    const trajectory = await getCareerTrajectory(parseInt(candidateId as string, 10));
+    if (!trajectory) {
+      return res.status(404).json({ error: 'Career trajectory not found' });
+    }
+    res.json(trajectory);
+  } catch (error) {
+    console.error('[internal] get career trajectory error:', error);
+    res.status(500).json({ error: 'Failed to get career trajectory' });
   }
 });
 

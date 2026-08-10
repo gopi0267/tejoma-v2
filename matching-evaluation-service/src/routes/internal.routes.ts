@@ -52,4 +52,30 @@ router.post('/reasoning-conclusions/replace', async (req, res) => {
   }
 });
 
+// Item 10: GET reasoning conclusions for explainability
+router.get('/reasoning-conclusions', async (req, res) => {
+  try {
+    const { subjectType, subjectId } = req.query;
+    if (!subjectType || !subjectId) {
+      return res.status(400).json({ error: 'subjectType and subjectId are required' });
+    }
+    const { getReasoningConclusions } = await import('../db.js');
+    const conclusions = await getReasoningConclusions(subjectType as string, parseInt(subjectId as string, 10));
+    if (!conclusions || conclusions.length === 0) {
+      return res.status(404).json({ error: 'Reasoning conclusions not found' });
+    }
+    // Return in the same format as the monolith endpoint
+    res.json({
+      subjectType,
+      subjectId: parseInt(subjectId as string, 10),
+      conclusions: conclusions.map(c => c.conclusions || []).flat(),
+      reasoning: conclusions[0]?.reasoning || '',
+      confidence: conclusions[0]?.confidence ?? 0.5
+    });
+  } catch (error) {
+    console.error('[internal] get reasoning conclusions error:', error);
+    res.status(500).json({ error: 'Failed to get reasoning conclusions' });
+  }
+});
+
 export default router;

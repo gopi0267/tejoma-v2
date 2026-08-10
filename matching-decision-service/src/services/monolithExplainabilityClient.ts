@@ -1,11 +1,11 @@
 /**
- * Monolith Explainability Client
+ * Explainability Data Client
  *
- * Calls internal endpoints on monolith to fetch:
- * - Career trajectory for candidate (seniority inference)
- * - Reasoning conclusions (match concerns, reasoning narrative)
+ * Item 10: Calls service endpoints to fetch:
+ * - Career trajectory for candidate (from matching-reasoning-service)
+ * - Reasoning conclusions (from matching-evaluation-service)
  *
- * These tables live only in the monolith (not mirrored to services).
+ * Fallback to monolith for backward compatibility during transition.
  * Used by: Item 3 (recruiter-review detail computation)
  *
  * Pattern: Fire-and-forget, 5-second timeout, never throws
@@ -14,7 +14,10 @@
 import { logger } from '../utils/logger.js';
 
 const MONOLITH_INTERNAL_URL = process.env.MONOLITH_INTERNAL_URL || 'http://localhost:3000';
+const MATCHING_REASONING_SERVICE_URL = process.env.MATCHING_REASONING_SERVICE_URL || 'http://localhost:4024';
+const MATCHING_EVALUATION_SERVICE_URL = process.env.MATCHING_EVALUATION_SERVICE_URL || 'http://localhost:4023';
 const REQUEST_TIMEOUT = 5000; // 5 seconds
+const EXPLANATION_CUTOVER_ENABLED = process.env.EXPLANATION_GENERATION_CUTOVER_ENABLED === 'true';
 
 export interface CareerTrajectory {
   candidateId: number;
@@ -47,7 +50,10 @@ export async function getCareerTrajectory(
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
 
-    const url = `${MONOLITH_INTERNAL_URL}/internal/career-trajectory?candidateId=${candidateId}&companyId=${companyId}`;
+    // Item 10: Use service endpoint if cutover enabled, otherwise fallback to monolith
+    const url = EXPLANATION_CUTOVER_ENABLED
+      ? `${MATCHING_REASONING_SERVICE_URL}/internal/career-trajectory?candidateId=${candidateId}`
+      : `${MONOLITH_INTERNAL_URL}/internal/career-trajectory?candidateId=${candidateId}&companyId=${companyId}`;
 
     const response = await fetch(url, {
       method: 'GET',
@@ -64,8 +70,8 @@ export async function getCareerTrajectory(
 
     if (!response.ok) {
       logger.warn(
-        { status: response.status, statusText: response.statusText },
-        'Failed to fetch career trajectory from monolith'
+        { status: response.status, statusText: response.statusText, source: EXPLANATION_CUTOVER_ENABLED ? 'service' : 'monolith' },
+        'Failed to fetch career trajectory'
       );
       return null;
     }
@@ -76,7 +82,7 @@ export async function getCareerTrajectory(
     if (error.name === 'AbortError') {
       logger.warn({ candidateId }, 'getCareerTrajectory: Request timeout (5s)');
     } else {
-      logger.warn({ err: error.message, candidateId }, 'Failed to call monolith explainability API');
+      logger.warn({ err: error.message, candidateId }, 'Failed to call career trajectory API');
     }
     return null;
   }
@@ -97,7 +103,10 @@ export async function getReasoningConclusions(
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
 
-    const url = `${MONOLITH_INTERNAL_URL}/internal/reasoning-conclusions?subjectType=${subjectType}&subjectId=${subjectId}`;
+    // Item 10: Use service endpoint if cutover enabled, otherwise fallback to monolith
+    const url = EXPLANATION_CUTOVER_ENABLED
+      ? `${MATCHING_EVALUATION_SERVICE_URL}/internal/reasoning-conclusions?subjectType=${subjectType}&subjectId=${subjectId}`
+      : `${MONOLITH_INTERNAL_URL}/internal/reasoning-conclusions?subjectType=${subjectType}&subjectId=${subjectId}`;
 
     const response = await fetch(url, {
       method: 'GET',
@@ -114,8 +123,8 @@ export async function getReasoningConclusions(
 
     if (!response.ok) {
       logger.warn(
-        { status: response.status, statusText: response.statusText },
-        'Failed to fetch reasoning conclusions from monolith'
+        { status: response.status, statusText: response.statusText, source: EXPLANATION_CUTOVER_ENABLED ? 'service' : 'monolith' },
+        'Failed to fetch reasoning conclusions'
       );
       return null;
     }
@@ -128,7 +137,7 @@ export async function getReasoningConclusions(
     } else {
       logger.warn(
         { err: error.message, subjectType, subjectId },
-        'Failed to call monolith explainability API'
+        'Failed to call reasoning conclusions API'
       );
     }
     return null;
