@@ -15,12 +15,16 @@ if [[ -f "$CERT_DIR/cert.pem" && -f "$CERT_DIR/key.pem" ]]; then
 fi
 
 # MSYS_NO_PATHCONV avoids Git Bash mangling "/CN=localhost" into a filesystem path.
+# Use CA:FALSE and serverAuth EKU to create a valid server certificate, not a CA certificate.
 MSYS_NO_PATHCONV=1 openssl req -x509 -nodes -newkey rsa:2048 \
   -keyout "$CERT_DIR/key.pem" \
   -out "$CERT_DIR/cert.pem" \
   -days 365 \
   -subj "/CN=localhost" \
-  -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
+  -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" \
+  -addext "basicConstraints=critical,CA:FALSE" \
+  -addext "keyUsage=critical,digitalSignature,keyEncipherment" \
+  -addext "extendedKeyUsage=serverAuth"
 
 echo "Self-signed dev cert written to $CERT_DIR/cert.pem and $CERT_DIR/key.pem"
 echo "Browsers will show a certificate warning for this cert - that's expected for local dev."

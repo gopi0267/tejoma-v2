@@ -21,14 +21,30 @@
  */
 import { createProxyMiddleware } from 'http-proxy-middleware';
 import type { Express, Request, Response, NextFunction } from 'express';
-import { IDENTITY_SERVICE_URL, PLATFORM_GOVERNANCE_SERVICE_URL, JD_PARSER_SERVICE_URL, CANDIDATE_SERVICE_URL, CHAT_SERVICE_URL, RESUME_SERVICE_URL, RECRUITING_SERVICE_URL, ANALYTICS_SERVICE_URL, MATCHING_EVALUATION_SERVICE_URL, MATCHING_SKILL_DISCOVERY_SERVICE_URL, MATCHING_SCORING_SERVICE_URL, CANDIDATE_CORE_SERVICE_URL, JOB_SERVICE_URL, MATCHING_DECISION_SERVICE_URL, MONOLITH_URL } from './config/env.js';
+import { IDENTITY_SERVICE_URL, PLATFORM_GOVERNANCE_SERVICE_URL, JD_PARSER_SERVICE_URL, CANDIDATE_SERVICE_URL, CHAT_SERVICE_URL, RESUME_SERVICE_URL, RECRUITING_SERVICE_URL, ANALYTICS_SERVICE_URL, MATCHING_EVALUATION_SERVICE_URL, MATCHING_SKILL_DISCOVERY_SERVICE_URL, MATCHING_SCORING_SERVICE_URL, CANDIDATE_CORE_SERVICE_URL, JOB_SERVICE_URL, MATCHING_DECISION_SERVICE_URL, MONOLITH_URL, MONOLITH_FALLBACK_ENABLED, CANARY_PERCENTAGE } from './config/env.js';
 import { logger } from './utils/logger.js';
 import { proxiedRequestCount } from './utils/metrics.js';
 import { authLimiter, globalLimiter } from './middleware/rateLimit.middleware.js';
+import * as crypto from 'crypto';
 
 // Auth-sensitive surfaces (credential testing, OTP, registration) get the stricter authLimiter;
 // everything else gets globalLimiter only - see rateLimit.middleware.ts's header comment.
 const AUTH_SENSITIVE_PREFIXES = ['/api/auth', '/api/candidate-auth', '/api/company-registration'];
+
+// Production canary: determine if a request should be routed through canary path
+// Uses hash of user ID or session ID for consistent routing - same user always routes the same way
+function isInCanaryPercentage(req: Request): boolean {
+  if (CANARY_PERCENTAGE >= 100) return true; // All traffic in canary path once at 100%
+  if (CANARY_PERCENTAGE <= 0) return false;  // No canary traffic if 0%
+
+  // Use Authorization header or IP + user-agent as hash source for consistent routing
+  const hashSource = req.headers.authorization || `${req.ip}:${req.get('user-agent')}`;
+  const hash = crypto.createHash('md5').update(hashSource).digest('hex');
+  const hashValue = parseInt(hash.substring(0, 8), 16);
+  const percentage = (hashValue % 100) + 1; // 1-100 range
+
+  return percentage <= CANARY_PERCENTAGE;
+}
 
 function isUnderAnyPrefix(path: string, prefixes: string[]): boolean {
   return prefixes.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
@@ -198,10 +214,47 @@ export function mountProxyRoutes(app: Express): void {
   // Strangler-fig fallback: every path not explicitly matched above goes to the monolith
   // unchanged - this is what keeps the frontend working with zero changes for everything not yet
   // migrated to Tier 0 (recruiting, matching, jobs, candidates, analytics, static assets, etc.).
+  //
+  // Production Canary: CANARY_PERCENTAGE controls gradual rollout (10% → 25% → 50% → 100%)
+  // - If in canary percentage: use microservice-only path (no fallback, stricter)
+  // - If not in canary percentage: allow fallback (if enabled, more lenient)
+  // This allows gradual rollout by slowly increasing traffic through the proven path.
   app.use((req: Request, res: Response, next: NextFunction) => {
-    globalLimiter(req, res, (err?: unknown) => {
-      if (err) return next(err);
-      proxyTo(MONOLITH_URL, 'monolith')(req, res, next);
-    });
+    const inCanary = isInCanaryPercentage(req);
+    const canaryMode = CANARY_PERCENTAGE < 100;
+
+    // In production canary: route based on canary percentage
+    if (canaryMode) {
+      if (inCanary) {
+        // In canary path: use microservice-only (stricter, no fallback)
+        res.status(404).json({
+          error: 'Not found (canary path - microservices only, no fallback)',
+          canary: { percentage: CANARY_PERCENTAGE, userInCanary: true },
+        });
+      } else {
+        // Not in canary path: allow fallback if enabled
+        if (MONOLITH_FALLBACK_ENABLED) {
+          globalLimiter(req, res, (err?: unknown) => {
+            if (err) return next(err);
+            proxyTo(MONOLITH_URL, 'monolith')(req, res, next);
+          });
+        } else {
+          res.status(404).json({
+            error: 'Not found (monolith fallback disabled)',
+            canary: { percentage: CANARY_PERCENTAGE, userInCanary: false },
+          });
+        }
+      }
+    } else {
+      // Not in canary mode: standard behavior
+      if (MONOLITH_FALLBACK_ENABLED) {
+        globalLimiter(req, res, (err?: unknown) => {
+          if (err) return next(err);
+          proxyTo(MONOLITH_URL, 'monolith')(req, res, next);
+        });
+      } else {
+        res.status(404).json({ error: 'Not found (monolith fallback disabled)' });
+      }
+    }
   });
 }

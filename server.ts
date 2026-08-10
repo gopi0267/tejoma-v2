@@ -166,6 +166,11 @@ app.use('/internal/matching-decision', matchingDecisionInternalRoutes);
 // ============================================================================
 registerApiRoutes(app);
 
+// Redirect root `/` to `/candidate` to show the landing page with Candidate/Recruiter role selection.
+// This is the entry point for new users before they choose their role (Candidate → /candidate, Recruiter → /).
+app.get('/', (req, res) => {
+  res.redirect(301, '/candidate');
+});
 
 // ============================================================================
 // START SERVER

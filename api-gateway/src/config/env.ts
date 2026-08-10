@@ -96,6 +96,17 @@ export const CANDIDATE_CORE_SERVICE_URL = process.env.CANDIDATE_CORE_SERVICE_URL
 export const JOB_SERVICE_URL = process.env.JOB_SERVICE_URL || '';
 export const MATCHING_DECISION_SERVICE_URL = process.env.MATCHING_DECISION_SERVICE_URL || '';
 export const MONOLITH_URL = process.env.MONOLITH_URL || '';
+export const MONOLITH_FALLBACK_ENABLED = process.env.MONOLITH_FALLBACK_ENABLED !== 'false';
+
+// Production canary: percentage of traffic routed through microservice-only path (0-100)
+// 100 = all traffic through microservices (full cutover)
+// 10 = 10% through microservices, 90% through fallback (early canary)
+// Default 100 for production once canary is verified
+export const CANARY_PERCENTAGE = parseInt(process.env.CANARY_PERCENTAGE || '100', 10);
+if (isNaN(CANARY_PERCENTAGE) || CANARY_PERCENTAGE < 0 || CANARY_PERCENTAGE > 100) {
+  console.error(`\nFATAL: CANARY_PERCENTAGE must be 0-100, got ${process.env.CANARY_PERCENTAGE}`);
+  process.exit(1);
+}
 
 const REQUIRED_ALWAYS = ['IDENTITY_SERVICE_URL', 'PLATFORM_GOVERNANCE_SERVICE_URL', 'JD_PARSER_SERVICE_URL', 'CANDIDATE_SERVICE_URL', 'CHAT_SERVICE_URL', 'RESUME_SERVICE_URL', 'RECRUITING_SERVICE_URL', 'ANALYTICS_SERVICE_URL', 'MATCHING_EVALUATION_SERVICE_URL', 'MATCHING_SKILL_DISCOVERY_SERVICE_URL', 'MATCHING_SCORING_SERVICE_URL', 'CANDIDATE_CORE_SERVICE_URL', 'JOB_SERVICE_URL', 'MATCHING_DECISION_SERVICE_URL', 'MONOLITH_URL'];
 
