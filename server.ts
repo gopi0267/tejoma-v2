@@ -4,7 +4,6 @@
  */
 import { IS_PRODUCTION } from './src/config/env.js'; // must be imported first - validates config and fails fast before anything else runs
 import express from 'express';
-import path from 'path';
 import helmet from 'helmet';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
@@ -181,16 +180,9 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    console.log('Starting in production mode...');
-    // The production bundle (dist/server.cjs) is CommonJS, so __dirname is a real, working
-    // native global here (it points at dist/, where esbuild wrote server.cjs and vite wrote
-    // the built SPA side by side) - no need to derive it, and the old import.meta.url-based
-    // derivation didn't work anyway (import.meta is empty once esbuild bundles to cjs format).
-    const distPath = __dirname;
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
+    console.log('Starting in production mode (API-only, SPA served by nginx)...');
+    // Phase D Item 1: Frontend extraction - monolith is now API-only in production.
+    // nginx serves the SPA from /app/dist directly, removing that responsibility from here.
   }
 
   // Must be registered last so it can catch errors from every layer above it.
