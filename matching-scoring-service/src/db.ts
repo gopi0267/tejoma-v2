@@ -102,6 +102,59 @@ export async function saveMatchFeatures(record: Omit<MatchFeatureRecord, 'id' | 
   }
 }
 
-export const db = { healthCheck, insertScoringComputation, saveMatchScore, saveMatchFeatures };
+export type ActiveModelType = 'heuristic' | 'ml_tree' | 'random_forest' | 'hybrid_weighted';
+
+export interface MlState {
+  id: number;
+  active_model_type: ActiveModelType;
+  is_retraining_in_progress: boolean;
+  last_training_timestamp: string;
+  updated_at: string;
+}
+
+export async function loadMlState(): Promise<MlState | null> {
+  try {
+    const result = await pool.query('SELECT * FROM ml_state WHERE id = 1');
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error('Error loading ml_state:', error);
+    return null;
+  }
+}
+
+export async function updateMlState(updates: Partial<Omit<MlState, 'id' | 'updated_at'>>): Promise<MlState | null> {
+  try {
+    const setClauses: string[] = [];
+    const values: any[] = [];
+    let paramCount = 1;
+
+    if (updates.active_model_type !== undefined) {
+      setClauses.push(`active_model_type = $${paramCount++}`);
+      values.push(updates.active_model_type);
+    }
+    if (updates.is_retraining_in_progress !== undefined) {
+      setClauses.push(`is_retraining_in_progress = $${paramCount++}`);
+      values.push(updates.is_retraining_in_progress);
+    }
+    if (updates.last_training_timestamp !== undefined) {
+      setClauses.push(`last_training_timestamp = $${paramCount++}`);
+      values.push(updates.last_training_timestamp);
+    }
+
+    if (setClauses.length === 0) return await loadMlState();
+
+    setClauses.push('updated_at = CURRENT_TIMESTAMP');
+    values.push(1);
+
+    const query = `UPDATE ml_state SET ${setClauses.join(', ')} WHERE id = $${paramCount} RETURNING *`;
+    const result = await pool.query(query, values);
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error('Error updating ml_state:', error);
+    return null;
+  }
+}
+
+export const db = { healthCheck, insertScoringComputation, saveMatchScore, saveMatchFeatures, loadMlState, updateMlState };
 
 export { pool };

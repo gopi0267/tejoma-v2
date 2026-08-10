@@ -34,25 +34,43 @@ import { predictBatch, getEnsembleHealth, EnsemblePrediction } from '../algorith
 import { cosineSimilarity as vectorCosineSimilarity } from '../utils/embeddings.js';
 import { computeLocationDistance } from './similarity/locationDistance.js';
 import { parseExperienceYears, resolveCandidateSalaryExpectation } from './parseCandidateFields.js';
+import { loadMlState, updateMlState, type ActiveModelType as DbActiveModelType } from '../db.js';
 
 export type ActiveModelType = 'heuristic' | 'ml_tree' | 'random_forest' | 'hybrid_weighted';
 
 // Item 3: ML admin state (final monolith migration item).
-// These are now owned by matching-scoring-service; mlAdmin.routes no longer proxies to monolith.
+// These are now persisted to matching-scoring-service's own database and restored on startup.
 export let activeModelType: ActiveModelType = 'random_forest';
 export let isRetrainingInProgress = false;
 export let lastTrainingTimestamp = new Date().toISOString();
 
-export function setActiveModelType(newType: ActiveModelType): void {
+export async function initializeMlState(): Promise<void> {
+  try {
+    const state = await loadMlState();
+    if (state) {
+      activeModelType = state.active_model_type as ActiveModelType;
+      isRetrainingInProgress = state.is_retraining_in_progress;
+      lastTrainingTimestamp = state.last_training_timestamp;
+    }
+  } catch (err) {
+    console.warn('Failed to initialize ml_state from database, using defaults', err);
+  }
+}
+
+export async function setActiveModelType(newType: ActiveModelType): Promise<void> {
   activeModelType = newType;
+  await updateMlState({ active_model_type: newType as DbActiveModelType });
 }
 
-export function setRetrainingStatus(status: boolean): void {
+export async function setRetrainingStatus(status: boolean): Promise<void> {
   isRetrainingInProgress = status;
+  await updateMlState({ is_retraining_in_progress: status });
 }
 
-export function updateLastTrainingTimestamp(): void {
-  lastTrainingTimestamp = new Date().toISOString();
+export async function updateLastTrainingTimestamp(): Promise<void> {
+  const now = new Date().toISOString();
+  lastTrainingTimestamp = now;
+  await updateMlState({ last_training_timestamp: now });
 }
 
 // Identical schedule to the monolith's getMlBlendWeight - see that file's comment for the

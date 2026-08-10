@@ -5,20 +5,25 @@
 import { app } from './server.js';
 import { logger } from './utils/logger.js';
 import { closePool } from './db.js';
+import { initializeMlState } from './matching/services.js';
 import { PORT } from './config/env.js';
 
-const server = app.listen(PORT, () => {
-  logger.info({ port: PORT, env: process.env.NODE_ENV }, 'matching-scoring-service listening');
-});
-
-async function shutdown(signal: string) {
-  logger.info({ signal }, 'matching-scoring-service shutting down');
-  server.close(async () => {
-    await closePool();
-    process.exit(0);
+(async () => {
+  await initializeMlState();
+  const server = app.listen(PORT, () => {
+    logger.info({ port: PORT, env: process.env.NODE_ENV }, 'matching-scoring-service listening');
   });
-  setTimeout(() => process.exit(1), 10_000).unref();
-}
 
-process.on('SIGTERM', () => shutdown('SIGTERM'));
-process.on('SIGINT', () => shutdown('SIGINT'));
+  async function shutdown(signal: string) {
+    logger.info({ signal }, 'matching-scoring-service shutting down');
+    server.close(async () => {
+      await closePool();
+      process.exit(0);
+    });
+    setTimeout(() => process.exit(1), 10_000).unref();
+  }
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+})();
+

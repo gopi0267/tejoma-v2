@@ -26,12 +26,12 @@ router.get('/ml/config', requireRole('recruiter', 'admin'), (_req, res) => {
   res.json({ activeModelType, isRetrainingInProgress, lastTrainingTimestamp });
 });
 
-router.post('/ml/config', requireRole('admin'), (req, res) => {
+router.post('/ml/config', requireRole('admin'), async (req, res) => {
   const { activeModelType: newType } = req.body;
   if (!newType || !['heuristic', 'ml_tree', 'random_forest', 'hybrid_weighted'].includes(newType)) {
     return res.status(400).json({ error: 'Invalid activeModelType' });
   }
-  setActiveModelType(newType);
+  await setActiveModelType(newType);
   res.json({ activeModelType: newType, isRetrainingInProgress, lastTrainingTimestamp });
 });
 
