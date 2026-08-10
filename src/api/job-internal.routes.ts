@@ -1,25 +1,24 @@
 /**
- * Internal, service-to-service endpoints for Job Service's write/list proxy (remaining-monolith
- * migration, Step 4). Same network-boundary trust model as every other /internal/* endpoint - no
- * JWT, API Gateway's proxy.ts already 404s /internal/* unconditionally.
+ * Internal reverse-mirror endpoints for Job Service (remaining-monolith migration, Step 4).
+ * Job Service now does its own writes locally (POST /api/jobs, PUT /api/jobs/:id, DELETE /api/jobs/:id)
+ * and mirro back to the monolith so other still-monolith surfaces (recruiter-review.routes.ts,
+ * candidate-search.routes.ts) keep seeing fresh job data. Same network-boundary trust model
+ * every other /internal/* endpoint documents: no JWT, gated by network boundary.
  *
- * Job Service's own public GET /api/jobs/:id is a REAL cutover (own DB read + candidate-core-
- * service's candidate pool + matching-scoring-service's ranking - no monolith call at all). Its
- * OTHER routes (list, create, update, delete) proxy here instead: GET /jobs (list) needs swipe-
- * count aggregation from matching-decision-service (not cut over until Step 6) and candidate
- * totals from candidate-core-service, and writes must keep flowing through the monolith so every
- * other still-monolith surface reading `jobs` directly (swipe.routes.ts,
- * recruiter-review.routes.ts, candidate-search.routes.ts) keeps seeing fresh data. Same "move the
- * edge first, migrate authority later" shape as Step 1/3a/3c.
+ * Two endpoints remain active:
+ * - POST /jobs/mirror-and-notify: Job-service calls this after writing a new/updated job
+ * - POST /jobs/mirror-delete: Job-service calls this after deleting a job
+ *
+ * All other endpoints (GET /jobs list, POST /jobs create, PUT /jobs/:id update, DELETE /jobs/:id)
+ * are dead code (job-service uses its own local implementations).
  */
 import { Router } from 'express';
 import { db } from '../db.js';
-import { removeJobFromIndex, indexJobInBackground } from '../rag.service.js';
-import { indexJobEmbeddingInBackground } from '../matching/embeddingIndex.js';
+import { removeJobFromIndex } from '../rag.service.js';
 import { discoverUnknownSkillsInBackground } from '../skillDiscoveryServiceShadow.js';
 import { computeReasoningForJobInBackground } from '../reasoningServiceShadow.js';
 import { publishRealtimeEvent } from '../realtimeBroadcast.js';
-import { getEnrichedJobsList, createJobWithSideEffects, updateJobWithSideEffects, jobDiscoveryContext } from './job.routes.js';
+import { jobDiscoveryContext } from './job.routes.js';
 import type { Job } from '../types.js';
 
 const router = Router();
@@ -69,66 +68,5 @@ router.post('/jobs/mirror-delete', async (req, res) => {
   }
 });
 
-router.get('/jobs', async (req, res) => {
-  try {
-    const companyId = Number(req.query.companyId);
-    if (!Number.isFinite(companyId)) return res.status(400).json({ error: 'companyId is required' });
-    const jobs = await getEnrichedJobsList(companyId);
-    res.json({ jobs });
-  } catch (error: any) {
-    console.error('[internal/job] list error:', error);
-    res.status(500).json({ error: 'Failed to load jobs: ' + error.message });
-  }
-});
-
-router.post('/jobs', async (req, res) => {
-  try {
-    const { job, companyId } = req.body as { job: any; companyId: number };
-    if (!job || typeof companyId !== 'number') {
-      return res.status(400).json({ error: 'job and companyId are required' });
-    }
-    const created = await createJobWithSideEffects(companyId, job);
-    if (created === 'invalid') {
-      return res.status(400).json({ error: 'Missing required job creation parameters' });
-    }
-    res.status(201).json({ job: created });
-  } catch (error: any) {
-    console.error('[internal/job] create error:', error);
-    res.status(500).json({ error: 'Failed to create job: ' + error.message });
-  }
-});
-
-router.put('/jobs/:id', async (req, res) => {
-  try {
-    const id = parseInt(req.params.id, 10);
-    const { job, companyId } = req.body as { job: any; companyId: number };
-    if (Number.isNaN(id) || !job || typeof companyId !== 'number') {
-      return res.status(400).json({ error: 'a valid id, job, and companyId are required' });
-    }
-    const updated = await updateJobWithSideEffects(id, companyId, job);
-    if (!updated) return res.status(404).json({ error: 'Job not found' });
-    res.json({ job: updated });
-  } catch (error: any) {
-    console.error('[internal/job] update error:', error);
-    res.status(500).json({ error: 'Failed to update job: ' + error.message });
-  }
-});
-
-router.delete('/jobs/:id', async (req, res) => {
-  try {
-    const id = parseInt(req.params.id, 10);
-    const companyId = Number(req.query.companyId);
-    if (Number.isNaN(id) || !Number.isFinite(companyId)) {
-      return res.status(400).json({ error: 'a valid id and companyId are required' });
-    }
-    const deleted = await db.deleteJob(id, companyId);
-    if (!deleted) return res.status(404).json({ error: 'Job not found or could not be deleted' });
-    removeJobFromIndex(id).catch((err) => console.error(`RAG unindex failed for job ${id}:`, err.message));
-    res.status(204).send();
-  } catch (error: any) {
-    console.error('[internal/job] delete error:', error);
-    res.status(500).json({ error: 'Failed to delete job: ' + error.message });
-  }
-});
 
 export default router;
