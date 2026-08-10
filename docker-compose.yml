@@ -51,6 +51,36 @@ services:
         max-size: "10m"
         max-file: "5"
 
+  # Phase D Item 2: Realtime service - handles SSE subscriptions via Redis pub/sub.
+  # Receives /stream requests and maintains SSE connections, forwarding Redis messages to clients.
+  # This removes SSE endpoint responsibility from the monolith.
+  realtime-service:
+    build:
+      context: ./realtime-service
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4030/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
   # Final monolith decommission, item 1 - pub/sub backbone for decentralized real-time
   # notifications (item 2) and connection target for the already-coded-but-previously-inert
   # BullMQ retrain queue (src/queue/retrainQueue.ts, fail-open when unreachable - see its own

@@ -20,7 +20,6 @@ import candidateCoreInternalRoutes from './src/api/candidate-core-internal.route
 import jobInternalRoutes from './src/api/job-internal.routes.js';
 import candidateSearchInternalRoutes from './src/api/candidate-search-internal.routes.js';
 import matchingDecisionInternalRoutes from './src/api/matching-decision-internal.routes.js';
-import { clients, initializeRealtimeSubscription, closeRealtimeSubscription } from './src/realtime.js';
 import { logger } from './src/utils/logger.js';
 import { globalLimiter, authLimiter } from './src/middleware/rateLimit.middleware.js';
 import { errorHandler } from './src/middleware/error.middleware.js';
@@ -99,21 +98,8 @@ app.get('/api/metrics', async (_req, res) => {
   res.send(await registry.metrics());
 });
 
-app.get('/api/realtime/stream', (req, res) => {
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  res.flushHeaders();
-
-  clients.push(res);
-
-  req.on('close', () => {
-    const index = clients.indexOf(res);
-    if (index !== -1) {
-      clients.splice(index, 1);
-    }
-  });
-});
+// Phase D Item 2: SSE endpoint removed - now handled by dedicated realtime-service.
+// nginx routes /api/realtime/stream to realtime-service:4030 instead of the monolith.
 
 // Candidate Service (Batch 16) internal API - network-boundary trusted (no JWT), matching every
 // other Tier 0 service's /internal/* convention. API Gateway's proxy.ts already 404s /internal/*
@@ -190,10 +176,6 @@ async function startServer() {
 
   const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`✅ Server running on http://localhost:${PORT}`);
-    // Initialize Redis subscription for real-time events from services.
-    initializeRealtimeSubscription().catch(err => {
-      logger.warn({ err }, 'Failed to initialize realtime subscription');
-    });
   });
 
   // Lets in-flight requests finish and closes the DB pool cleanly on container stop/restart,
@@ -204,7 +186,6 @@ async function startServer() {
     shuttingDown = true;
     console.log(`${signal} received, shutting down gracefully...`);
     server.close(async () => {
-      await closeRealtimeSubscription();
       await closeRetrainQueue();
       await db.closeConnection();
       console.log('Shutdown complete.');
