@@ -24,6 +24,7 @@ import { Router } from 'express';
 import { db } from '../db.js';
 import { publishRealtimeEvent } from '../realtimeBroadcast.js';
 import { enqueueRetrain } from '../queue/retrainQueue.js';
+import { mirrorRecentActivity } from '../services/analyticsClient.js';
 import { logger } from '../utils/logger.js';
 import { logShadowScoresInBackground } from '../matchingEvaluationServiceShadow.js';
 import {
@@ -102,6 +103,17 @@ router.post('/swipes/mirror-and-notify', async (req, res) => {
     if (source !== 'decision-change') {
       enqueueRetrain().catch((err) => logger.warn({ err: err.message }, 'Failed to enqueue background retrain after swipe mirror'));
     }
+
+    // Item 4: Mirror recent activity to analytics-service for CQRS read model population
+    mirrorRecentActivity(companyId, {
+      swipeId: Number(swipe.id),
+      recruiterName: undefined,
+      candidateName: candidate?.name,
+      jobTitle: job?.title,
+      action: action === 1 ? 'accept' : 'reject',
+      matchScore: Number(swipe.match_score),
+      timestamp: new Date().toISOString(),
+    }).catch((err) => logger.warn({ err: err.message }, 'Failed to mirror recent activity to analytics'));
 
     res.status(200).json({ mirrored: true });
   } catch (error: any) {
