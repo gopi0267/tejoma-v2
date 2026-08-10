@@ -11,6 +11,8 @@ import { User, Company, Candidate, Job, Swipe, MatchScore, ModelVersion, DailySt
 // Tier 0 migration (Batch 13b) - see src/dualWrite.ts's header comment for the full contract.
 // Disabled by default (DUAL_WRITE_ENABLED); every call below is a no-op until an operator opts in.
 import * as dualWrite from './dualWrite.js';
+// Phase D Item 4: Reasoning conclusions cutover flag
+import { REASONING_CONCLUSIONS_CUTOVER_ENABLED, MATCHING_EVALUATION_SERVICE_URL } from './config/env.js';
 
 config({ path: '.env.local' });
 
@@ -4032,6 +4034,28 @@ export async function replaceReasoningConclusions(
   subjectId: number,
   conclusions: DraftConclusion[]
 ): Promise<ReasoningConclusion[]> {
+  // Phase D Item 4: If cutover enabled, write to matching-evaluation-service instead of locally
+  if (REASONING_CONCLUSIONS_CUTOVER_ENABLED) {
+    try {
+      const res = await fetch(`${MATCHING_EVALUATION_SERVICE_URL}/internal/reasoning-conclusions/replace`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subjectType, subjectId, conclusions }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        console.error('Error calling matching-evaluation-service:', res.status, body);
+        return [];
+      }
+      const data = await res.json();
+      return data.conclusions || [];
+    } catch (error) {
+      console.error('Error calling matching-evaluation-service for reasoning conclusions:', error);
+      return [];
+    }
+  }
+
+  // Fallback: write locally (backward compatibility when cutover is disabled)
   const client = await pool.connect();
   try {
     await client.query('BEGIN');

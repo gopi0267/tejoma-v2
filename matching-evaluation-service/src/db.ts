@@ -212,6 +212,44 @@ export async function getReasoningConclusions(subjectType: ConclusionSubjectType
   }
 }
 
+// Phase D Item 4: Owned write path (replaces monolith's passive mirror on REASONING_CONCLUSIONS_CUTOVER_ENABLED)
+export async function replaceReasoningConclusions(
+  subjectType: ConclusionSubjectType,
+  subjectId: number,
+  conclusions: any[]
+): Promise<ReasoningConclusion[]> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('DELETE FROM reasoning_conclusions WHERE subject_type = $1 AND subject_id = $2', [subjectType, subjectId]);
+
+    const inserted: ReasoningConclusion[] = [];
+    for (const c of conclusions) {
+      const result = await client.query(
+        `INSERT INTO reasoning_conclusions (
+           subject_type, subject_id, conclusion_text, conclusion_type, reasoning_type,
+           evidence_chain, conclusion_confidence, confidence_derivation, derived_from
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+         RETURNING *`,
+        [
+          subjectType, subjectId, c.conclusion_text, c.conclusion_type, c.reasoning_type,
+          JSON.stringify(c.evidence_chain), c.conclusion_confidence, c.confidence_derivation, c.derived_from,
+        ]
+      );
+      inserted.push(coerceReasoningConclusionRow(result.rows[0]));
+    }
+
+    await client.query('COMMIT');
+    return inserted;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Error replacing reasoning conclusions:', error);
+    return [];
+  } finally {
+    client.release();
+  }
+}
+
 // ==================== shadow_weighting_computations (Batch 31, owned, written directly by this service) ====================
 // This service's OWN independently-computed version of the monolith's shadowScoring.ts orchestrator
 // - never merged with proficiency_shadow_scores (the passive mirror of what the monolith actually
@@ -313,6 +351,7 @@ export const db = {
   getAllRoleProfiles,
   getCareerTrajectory,
   getReasoningConclusions,
+  replaceReasoningConclusions,
   insertShadowWeightingComputation,
 };
 

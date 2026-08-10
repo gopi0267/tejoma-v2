@@ -70,3 +70,10 @@ export const DUAL_WRITE_ENABLED = process.env.DUAL_WRITE_ENABLED === 'true';
 export const UPLOAD_SERVICE_URL = process.env.UPLOAD_SERVICE_URL || 'http://localhost:4030';
 export const RESUME_SERVICE_URL = process.env.RESUME_SERVICE_URL || 'http://localhost:4031';
 export const NOTIFICATIONS_SERVICE_URL = process.env.NOTIFICATIONS_SERVICE_URL || 'http://localhost:4032';
+export const MATCHING_EVALUATION_SERVICE_URL = process.env.MATCHING_EVALUATION_SERVICE_URL || 'http://localhost:4023';
+
+// ============================================================
+// Phase D Cutover Flags - Full Monolith-to-Microservices Migration
+// ============================================================
+
+export const REASONING_CONCLUSIONS_CUTOVER_ENABLED = process.env.REASONING_CONCLUSIONS_CUTOVER_ENABLED === 'true';
