@@ -812,6 +812,7 @@ services:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
       - ./nginx/certs:/etc/nginx/certs:ro
+      - ./dist:/app/dist:ro
       - ./logs/nginx:/var/log/nginx
     restart: unless-stopped
     networks:
