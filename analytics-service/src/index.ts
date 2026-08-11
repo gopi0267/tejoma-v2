@@ -19,23 +19,24 @@ async function start() {
     logger.error({ err: error }, 'Failed to initialize analytics schema, continuing anyway');
   }
 
-  // Initialize event subscriber (CQRS write model population)
-  try {
-    const unsubscribe = await initializeEventSubscriber(
-      handleJobCreated,
-      handleSwiped,
-      handleDecisionChanged,
-      handleCandidateUpdated
-    );
-    setUnsubscribe(unsubscribe);
-    logger.info('Analytics event subscriber initialized');
-  } catch (error) {
-    logger.warn({ err: error }, 'Failed to initialize event subscriber, service will use monolith fallback');
-  }
-
   server = app.listen(PORT, () => {
     logger.info({ port: PORT, env: process.env.NODE_ENV }, 'analytics-service listening');
   });
+
+  // Initialize event subscriber (CQRS write model population) - non-blocking
+  initializeEventSubscriber(
+    handleJobCreated,
+    handleSwiped,
+    handleDecisionChanged,
+    handleCandidateUpdated
+  )
+    .then((unsubscribe) => {
+      setUnsubscribe(unsubscribe);
+      logger.info('Analytics event subscriber initialized');
+    })
+    .catch((error) => {
+      logger.warn({ err: error }, 'Failed to initialize event subscriber, service will use monolith fallback');
+    });
 
   async function shutdown(signal: string) {
     logger.info({ signal }, 'analytics-service shutting down');
