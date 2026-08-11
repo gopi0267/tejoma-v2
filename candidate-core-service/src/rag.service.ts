@@ -1,8 +1,9 @@
 import type { Candidate } from './types.js';
 import { embedText } from './utils/embeddings.js';
 import { logger } from './utils/logger.js';
+import { db } from './db.js';
 
-const MONOLITH_INTERNAL_URL = process.env.MONOLITH_INTERNAL_URL || 'http://localhost:3006';
+const CHAT_SERVICE_URL = process.env.CHAT_SERVICE_URL || 'http://localhost:4006';
 
 function buildCandidateChunk(c: Candidate): string {
   const skills = Array.isArray(c.skills) ? c.skills.join(', ') : '';
@@ -22,31 +23,42 @@ export async function indexCandidate(candidate: Candidate): Promise<void> {
   const embedding = await embedText(content);
 
   try {
-    const response = await fetch(`${MONOLITH_INTERNAL_URL}/internal/knowledge-base/upsert`, {
+    await db.query(
+      `INSERT INTO knowledge_base_chunks (company_id, source_type, source_id, content, embedding)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (source_type, source_id) DO UPDATE SET
+         content = EXCLUDED.content,
+         embedding = EXCLUDED.embedding,
+         updated_at = CURRENT_TIMESTAMP`,
+      [candidate.company_id, 'candidate', candidate.id, content, embedding]
+    );
+
+    // Mirror to chat-service (fire-and-forget)
+    fetch(`${CHAT_SERVICE_URL}/internal/knowledge-base/upsert`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ company_id: candidate.company_id, source_type: 'candidate', source_id: candidate.id, content, embedding }),
-    });
-    if (!response.ok) {
-      throw new Error(`Monolith returned ${response.status}`);
-    }
+    }).catch((err) => logger.warn({ err }, `Failed to mirror candidate ${candidate.id} to chat-service`));
   } catch (err) {
-    logger.warn({ err }, `Failed to index candidate ${candidate.id} to monolith knowledge base`);
+    logger.warn({ err }, `Failed to index candidate ${candidate.id} to local knowledge base`);
   }
 }
 
 export async function removeCandidateFromIndex(candidateId: number): Promise<void> {
   try {
-    const response = await fetch(`${MONOLITH_INTERNAL_URL}/internal/knowledge-base/delete`, {
+    await db.query(
+      `DELETE FROM knowledge_base_chunks WHERE source_type = $1 AND source_id = $2`,
+      ['candidate', candidateId]
+    );
+
+    // Mirror deletion to chat-service (fire-and-forget)
+    fetch(`${CHAT_SERVICE_URL}/internal/knowledge-base/delete`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ source_type: 'candidate', source_id: candidateId }),
-    });
-    if (!response.ok) {
-      throw new Error(`Monolith returned ${response.status}`);
-    }
+    }).catch((err) => logger.warn({ err }, `Failed to mirror candidate ${candidateId} deletion to chat-service`));
   } catch (err) {
-    logger.warn({ err }, `Failed to remove candidate ${candidateId} from monolith knowledge base`);
+    logger.warn({ err }, `Failed to remove candidate ${candidateId} from local knowledge base`);
   }
 }
 

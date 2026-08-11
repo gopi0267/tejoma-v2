@@ -16,6 +16,7 @@ import { registry, metricsMiddleware } from './utils/metrics.js';
 import { requestIdMiddleware } from './middleware/requestId.middleware.js';
 import healthRoutes from './routes/health.routes.js';
 import chatRoutes from './routes/chat.routes.js';
+import internalRoutes from './routes/internal.routes.js';
 import { IS_PRODUCTION } from './config/env.js';
 
 const app = express();
@@ -52,6 +53,7 @@ app.use(metricsMiddleware);
 
 app.use('/', healthRoutes);
 app.use('/api', chatRoutes);
+app.use('/internal', internalRoutes);
 
 app.get('/metrics', async (_req, res) => {
   res.set('Content-Type', registry.contentType);
