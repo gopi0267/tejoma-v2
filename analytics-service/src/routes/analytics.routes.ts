@@ -19,7 +19,7 @@ router.get('/analytics/dashboard', async (req, res) => {
     const stats = await db.getDashboardStats(companyId);
 
     // Return default empty stats if cache not yet populated (allows dashboard to load even without backfill)
-    const dashboardStats = stats || {
+    const dbStats = stats || {
       total_reviewed: 0,
       matches_made: 0,
       avg_score: 0,
@@ -32,11 +32,21 @@ router.get('/analytics/dashboard', async (req, res) => {
 
     const trends = await db.getDailyTrends(companyId);
     const recentActivity = await db.getRecentActivity(companyId, 5);
+
+    // Convert snake_case from DB to camelCase for frontend
     res.json({
-      ...dashboardStats,
+      totalCandidatesReviewed: dbStats.total_reviewed || 0,
+      matchesMade: dbStats.matches_made || 0,
+      avgScore: dbStats.avg_score || 0,
+      acceptanceRate: dbStats.acceptance_rate || 0,
+      totalSwipesToday: dbStats.total_swipes_today || 0,
+      swipesTodayChangePct: null,
+      totalSwipesYesterday: dbStats.total_swipes_yesterday || 0,
+      pendingCandidates: dbStats.pending_candidates || 0,
+      modelAccuracy: dbStats.model_accuracy,
       trends: trends || [],
       swipesTrend: trends || [],
-      recentActivity: recentActivity || [],
+      recent_activity: recentActivity || [],
     });
   } catch (error: any) {
     logger.error({ err: error.message }, 'Failed to load dashboard');
