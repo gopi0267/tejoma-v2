@@ -5,13 +5,21 @@
 import { Router } from 'express';
 import { db } from '../db.js';
 import { logger } from '../utils/logger.js';
+import { MONOLITH_INTERNAL_URL } from '../config/env.js';
 import { getDashboard, getJobAnalytics, getRecruiterProfile, getSkills } from '../services/monolithClient.js';
 
 const router = Router();
 
 // Bootstrap endpoint to populate analytics from monolith (called on startup if needed)
+// REQUIRES: MONOLITH_INTERNAL_URL to be configured and accessible
 router.post('/bootstrap', async (req, res) => {
   try {
+    if (!MONOLITH_INTERNAL_URL) {
+      return res.status(503).json({
+        error: 'Bootstrap requires MONOLITH_INTERNAL_URL configuration. Use mirror events from services instead.'
+      });
+    }
+
     const companyIds = req.body.companyIds as number[] || [];
     if (companyIds.length === 0) {
       return res.status(400).json({ error: 'companyIds array required' });

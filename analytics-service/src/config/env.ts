@@ -1,17 +1,15 @@
 /**
- * Startup environment validation for Analytics Service - mirrors every other Tier 0 service's
- * fail-fast convention.
+ * Startup environment validation for Analytics Service.
  *
  * JWT_SECRET: verifies the same HS256 staff token the monolith issues today
  * (src/utils/tokens.ts's signAccessToken), not a JWKS scheme - identical reasoning to
  * jd-parser-service's config/env.ts: staff auth has not cut over to Identity Service yet. All
  * four routes this service exposes are recruiter/admin only.
  *
- * MONOLITH_INTERNAL_URL: this service owns nothing directly - every route proxies to the
- * monolith's new /internal/analytics/* API. Required, not graceful-null: an Analytics Service
- * that can't reach it has no reasonable way to serve any of its routes at all (Batch 22 domain
- * audit - analytics.routes.ts's four routes are pure SQL aggregation over swipes/jobs/candidates/
- * users, none of which this service owns or could sensibly own a copy of).
+ * MONOLITH_INTERNAL_URL: Optional. Only used by internal /bootstrap endpoint for initial
+ * analytics data backfill. Production analytics routes (/api/analytics/*) read from local
+ * CQRS cache tables (tejoma_analytics database) and have NO runtime dependency on the monolith.
+ * Marked optional to support production deployment without monolith.
  */
 import { config } from 'dotenv';
 
@@ -24,7 +22,7 @@ export const PORT = parseInt(process.env.PORT || '4010', 10);
 export const JWT_SECRET = process.env.JWT_SECRET || 'dev-only-insecure-secret';
 export const MONOLITH_INTERNAL_URL = process.env.MONOLITH_INTERNAL_URL || '';
 
-const REQUIRED_ALWAYS = ['MONOLITH_INTERNAL_URL'];
+const REQUIRED_ALWAYS: string[] = [];
 
 const fatal: string[] = [];
 
