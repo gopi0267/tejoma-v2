@@ -9,7 +9,9 @@ import { Router } from 'express';
 import { GoogleGenAI } from '@google/genai';
 import { requireAuth, requireRole } from '../middleware/auth.middleware.js';
 import { retrieveRelevantChunks, reindexAllCandidates, reindexAllJobs } from '../services/ragService.js';
-import { getPlatformStats, getAllCandidatesUnscoped, getAllJobsUnscoped, MonolithProxyError } from '../services/monolithClient.js';
+import { getPlatformStats, MonolithProxyError } from '../services/monolithClient.js';
+import { getAllCandidates, CandidateCoreServiceError } from '../services/candidateCoreServiceClient.js';
+import { getAllJobs, JobServiceError } from '../services/jobServiceClient.js';
 import { GEMINI_API_KEY } from '../config/env.js';
 import { logger } from '../utils/logger.js';
 import { chatRequestCount, chatGenerationDuration } from '../utils/metrics.js';
@@ -107,9 +109,10 @@ router.post('/chat', async (req, res) => {
 });
 
 // Admin-triggered resync of the RAG knowledge base.
+// Item 5: Now uses candidate-core-service and job-service instead of monolith for unscoped reads.
 router.post('/chat/reindex', requireRole('admin'), async (_req, res) => {
   try {
-    const [candidatesResult, jobsResult] = await Promise.all([getAllCandidatesUnscoped(), getAllJobsUnscoped()]);
+    const [candidatesResult, jobsResult] = await Promise.all([getAllCandidates(), getAllJobs()]);
     const [candidateResult, jobResult] = await Promise.all([
       reindexAllCandidates(candidatesResult.candidates),
       reindexAllJobs(jobsResult.jobs),
@@ -117,7 +120,7 @@ router.post('/chat/reindex', requireRole('admin'), async (_req, res) => {
     res.json({ success: true, candidates: candidateResult, jobs: jobResult });
   } catch (error: any) {
     logger.error({ err: error.message }, 'Knowledge base reindex failed');
-    const status = error instanceof MonolithProxyError ? 502 : 500;
+    const status = error instanceof CandidateCoreServiceError || error instanceof JobServiceError ? 502 : 500;
     res.status(status).json({ success: false, error: error.message });
   }
 });
