@@ -18,10 +18,13 @@ import { removeJobFromIndex } from '../rag.service.js';
 import { discoverUnknownSkillsInBackground } from '../skillDiscoveryServiceShadow.js';
 import { computeReasoningForJobInBackground } from '../reasoningServiceShadow.js';
 import { publishRealtimeEvent } from '../realtimeBroadcast.js';
-import { jobDiscoveryContext } from './job.routes.js';
 import type { Job } from '../types.js';
 
 const router = Router();
+
+function jobDiscoveryContext(job: Job): string {
+  return [job.title, job.description].filter((t) => t && t.trim()).join('. ');
+}
 
 // Write-cutover completion plan, Phase B - Job Service now performs the real INSERT/UPDATE/DELETE
 // itself (own database, own id sequence); these two endpoints are the reverse of the create/

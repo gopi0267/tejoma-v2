@@ -1,12 +1,11 @@
 /**
  * Item 4: Analytics CQRS - routes query local denormalized read model (analytics_* tables).
- * If tables are empty, fall back to monolith for backward compatibility during transition.
+ * Production mode: No monolith fallback. Services operate independently.
  */
 import { Router } from 'express';
 import { requireAuth, requireRole } from '../middleware/auth.middleware.js';
 import { db } from '../db.js';
 import { logger } from '../utils/logger.js';
-import { getDashboard, getJobAnalytics, getRecruiterProfile, getSkills, MonolithProxyError } from '../services/monolithClient.js';
 
 const router = Router();
 // Recruiters see their own dashboard/analytics; admins see everything. Not admin-only, matching
@@ -19,10 +18,9 @@ router.get('/analytics/dashboard', async (req, res) => {
     const companyId = req.user!.company_id;
     const stats = await db.getDashboardStats(companyId);
 
-    // Fall back to monolith if local cache is empty (transition period)
-    if (!stats || (stats.total_reviewed === 0 && stats.totalCandidatesReviewed === 0)) {
-      const monolithResult = await getDashboard(companyId);
-      return res.json(monolithResult);
+    // Local analytics cache - no monolith fallback for production (monolith-independent operation)
+    if (!stats) {
+      return res.status(503).json({ error: 'Analytics cache not yet populated. Run backfill script.' });
     }
 
     const trends = await db.getDailyTrends(companyId);
@@ -34,10 +32,6 @@ router.get('/analytics/dashboard', async (req, res) => {
       recentActivity,
     });
   } catch (error: any) {
-    if (error instanceof MonolithProxyError) {
-      logger.error({ status: error.status }, 'Failed to reach monolith for dashboard fallback');
-      return res.status(502).json({ error: 'Failed to load dashboard' });
-    }
     logger.error({ err: error.message }, 'Failed to load dashboard');
     res.status(500).json({ error: 'Failed to load dashboard' });
   }
@@ -52,10 +46,9 @@ router.get('/analytics/job/:job_id', async (req, res) => {
     }
     const stats = await db.getJobStats(job_id, companyId);
 
-    // Fall back to monolith if no local data
-    if (!stats || stats.total_reviewed === 0) {
-      const result = await getJobAnalytics(job_id, companyId);
-      return res.json(result);
+    // Return empty stats if no local data (no monolith fallback for production)
+    if (!stats) {
+      return res.json({ total_reviewed: 0, acceptance_rate: 0, skillDistribution: [] });
     }
 
     const skills = await db.getSkillDistribution(companyId, 5);
@@ -65,9 +58,6 @@ router.get('/analytics/job/:job_id', async (req, res) => {
       skillDistribution: skills,
     });
   } catch (error: any) {
-    if (error instanceof MonolithProxyError && error.status === 404) {
-      return res.status(404).json({ error: 'Job not found' });
-    }
     logger.error({ err: error.message }, 'Failed to load job analytics');
     res.status(500).json({ error: 'Failed to load job analytics' });
   }
@@ -77,13 +67,9 @@ router.get('/analytics/recruiter/me', async (req, res) => {
   try {
     const profile = await db.getRecruiterProfile(req.user!.user_id, req.user!.company_id);
 
-    // Fall back to monolith if no local profile data
-    if (!profile || profile.swipesCount === 0) {
-      const result = await getRecruiterProfile(req.user!.user_id, req.user!.company_id);
-      if (!result) {
-        return res.status(404).json({ error: 'Recruiter profile not found' });
-      }
-      return res.json(result);
+    // No monolith fallback for production - return current stats or empty
+    if (!profile) {
+      return res.status(404).json({ error: 'Recruiter profile not found' });
     }
 
     res.json({
@@ -101,9 +87,6 @@ router.get('/analytics/recruiter/me', async (req, res) => {
       status: profile.isActive ? 'active' : 'disabled',
     });
   } catch (error: any) {
-    if (error instanceof MonolithProxyError && error.status === 404) {
-      return res.status(404).json({ error: 'Recruiter profile not found' });
-    }
     logger.error({ err: error.message }, 'Failed to load recruiter profile');
     res.status(500).json({ error: 'Failed to load recruiter profile' });
   }
@@ -114,13 +97,8 @@ router.get('/analytics/skills', async (req, res) => {
     const companyId = req.user!.company_id;
     const skillDistribution = await db.getSkillDistribution(companyId, 8);
 
-    // Fall back to monolith if no local skill data
-    if (!skillDistribution || skillDistribution.length === 0) {
-      const result = await getSkills(companyId);
-      return res.json(result.skillDistribution.map((s: any) => ({ skill: s.name, count: s.value })));
-    }
-
-    res.json(skillDistribution.map((s) => ({ skill: s.name, count: s.value })));
+    // No monolith fallback for production - return current aggregations or empty
+    res.json((skillDistribution || []).map((s) => ({ skill: s.name, count: s.value })));
   } catch (error: any) {
     logger.error({ err: error.message }, 'Failed to load skill analytics');
     res.status(500).json({ error: 'Failed to load skill analytics' });

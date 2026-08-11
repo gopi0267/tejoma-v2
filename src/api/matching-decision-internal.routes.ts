@@ -27,12 +27,68 @@ import { enqueueRetrain } from '../queue/retrainQueue.js';
 import { mirrorRecentActivity } from '../services/analyticsClient.js';
 import { logger } from '../utils/logger.js';
 import { logShadowScoresInBackground } from '../matchingEvaluationServiceShadow.js';
-import {
-  getRecruiterReviewListWithStats,
-  getRecruiterReviewDetailWithExplanation,
-} from './recruiter-review.routes.js';
+import { computeMatchExplanation } from '../matching/explainability/computeExplanation.js';
+import type { RecruiterReviewFilters } from '../types.js';
 
 const router = Router();
+
+async function getRecruiterReviewListWithStats(companyId: number, q: RecruiterReviewFilters) {
+  const [{ rows, totalRecords }, stats] = await Promise.all([
+    db.getRecruiterReviewList(companyId, {
+      search: q.search,
+      jobId: q.jobId,
+      decision: q.decision,
+      recruiterId: q.recruiterId,
+      dateFrom: q.dateFrom,
+      dateTo: q.dateTo,
+      minExperience: q.minExperience,
+      maxExperience: q.maxExperience,
+      skills: q.skills,
+      minScore: q.minScore,
+      maxScore: q.maxScore,
+      sortBy: q.sortBy,
+      page: q.page,
+      pageSize: q.pageSize,
+    }),
+    db.getRecruiterReviewStats(companyId),
+  ]);
+
+  const acceptanceRate = stats.totalReviewed > 0 ? Number(((stats.accepted / stats.totalReviewed) * 100).toFixed(1)) : 0;
+  const rejectionRate = stats.totalReviewed > 0 ? Number(((stats.rejected / stats.totalReviewed) * 100).toFixed(1)) : 0;
+
+  return {
+    data: rows,
+    page: q.page,
+    pageSize: q.pageSize,
+    totalRecords,
+    totalPages: Math.max(1, Math.ceil(totalRecords / q.pageSize)),
+    stats: {
+      totalReviewed: stats.totalReviewed,
+      accepted: stats.accepted,
+      rejected: stats.rejected,
+      saved: stats.saved,
+      acceptanceRate,
+      rejectionRate,
+      avgMatchScore: stats.avgMatchScore,
+      today: stats.today,
+      thisWeek: stats.thisWeek,
+      thisMonth: stats.thisMonth,
+    },
+  };
+}
+
+async function getRecruiterReviewDetailWithExplanation(candidateId: number, jobId: number, companyId: number) {
+  const [detail, savedReport] = await Promise.all([
+    db.getRecruiterReviewDetail(candidateId, jobId, companyId),
+    db.getDetailedScoringReport(companyId, candidateId, jobId),
+  ]);
+  if (!detail) return null;
+  const explanation = await computeMatchExplanation(detail.candidate!, detail.job!, detail.history).catch((err) => {
+    console.error('Failed to compute match explanation:', err);
+    return null;
+  });
+  return { ...detail, detailedScore: savedReport?.report ?? null, detailedScoreGeneratedAt: savedReport?.generated_at ?? null, explanation };
+}
 
 // Write-cutover completion plan, Phase C (extended in Phase D for source: 'decision-change') -
 // matching-decision-service now performs the real INSERT itself (own database, own id sequence)

@@ -24,7 +24,6 @@ import { Router } from 'express';
 import { db } from '../db.js';
 import { rankJobsForCandidate, toSyntheticCandidateFromAccount } from '../matching/matchingApi.js';
 import { computeCandidateMatchExplanation } from '../matching/explainability/computeExplanation.js';
-import { computeCandidateAnalytics } from './candidate-analytics.routes.js';
 import type { Job, CandidateAccount } from '../types.js';
 
 const router = Router();
@@ -246,23 +245,6 @@ router.get('/applications/:jobId', async (req, res) => {
   } catch (error) {
     console.error('[internal/candidate] application detail error:', error);
     res.status(500).json({ error: 'Failed to load application' });
-  }
-});
-
-// ==================== ANALYTICS (Remaining-monolith migration, Step 3c) ====================
-
-router.get('/analytics', async (req, res) => {
-  try {
-    const candidateAccountId = parseCandidateAccountId(req.query.candidateAccountId);
-    if (!candidateAccountId) return res.status(400).json({ error: 'candidateAccountId is required' });
-    const analytics = await computeCandidateAnalytics(candidateAccountId);
-    if (!analytics) {
-      return res.status(404).json({ error: 'Candidate not found' });
-    }
-    res.json(analytics);
-  } catch (error) {
-    console.error('[internal/candidate] analytics error:', error);
-    res.status(500).json({ error: 'Failed to load analytics' });
   }
 });
 
