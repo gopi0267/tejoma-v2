@@ -1,8 +1,7 @@
 /**
- * Candidate auth verification for Candidate Service - verifies the exact token
- * src/utils/tokens.ts's signCandidateAccessToken issues today (HS256, shared JWT_SECRET), not a
- * JWKS scheme. See config/env.ts's header comment for why (candidate auth hasn't cut over to
- * Identity Service yet).
+ * Candidate auth verification for Candidate Service - verifies RS256 tokens issued by Identity Service.
+ * Candidate auth has completed its cutover to Identity Service. This middleware verifies tokens
+ * using Identity Service's public key (injected from IDENTITY_JWT_PUBLIC_KEY environment variable).
  *
  * Unlike the monolith's src/api/candidate-profile.routes.ts etc. (which gate per-route because
  * they're mounted at a shared '/api' prefix alongside staff-only routers), this entire service
@@ -11,7 +10,7 @@
  */
 import jwt from 'jsonwebtoken';
 import type { Request, Response, NextFunction } from 'express';
-import { JWT_SECRET } from '../config/env.js';
+import { IDENTITY_JWT_PUBLIC_KEY } from '../config/env.js';
 
 export interface CandidateTokenPayload {
   candidate_id: number;
@@ -43,7 +42,7 @@ function extractToken(req: Request): string | null {
 
 function verifyCandidateAccessToken(token: string): CandidateTokenPayload | null {
   try {
-    return jwt.verify(token, JWT_SECRET) as CandidateTokenPayload;
+    return jwt.verify(token, IDENTITY_JWT_PUBLIC_KEY, { algorithms: ['RS256'] }) as CandidateTokenPayload;
   } catch {
     return null;
   }
