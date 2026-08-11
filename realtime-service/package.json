@@ -5,7 +5,7 @@
   "description": "Real-time event streaming service (SSE via Redis pub/sub)",
   "main": "src/server.ts",
   "scripts": {
-    "start": "node --loader tsx src/server.ts",
+    "start": "node --import tsx src/server.ts",
     "dev": "tsx watch src/server.ts"
   },
   "dependencies": {
