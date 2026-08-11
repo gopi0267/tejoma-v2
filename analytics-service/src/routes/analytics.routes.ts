@@ -18,18 +18,25 @@ router.get('/analytics/dashboard', async (req, res) => {
     const companyId = req.user!.company_id;
     const stats = await db.getDashboardStats(companyId);
 
-    // Local analytics cache - no monolith fallback for production (monolith-independent operation)
-    if (!stats) {
-      return res.status(503).json({ error: 'Analytics cache not yet populated. Run backfill script.' });
-    }
+    // Return default empty stats if cache not yet populated (allows dashboard to load even without backfill)
+    const dashboardStats = stats || {
+      total_reviewed: 0,
+      matches_made: 0,
+      avg_score: 0,
+      acceptance_rate: 0,
+      total_swipes_today: 0,
+      total_swipes_yesterday: 0,
+      pending_candidates: 0,
+      model_accuracy: null,
+    };
 
     const trends = await db.getDailyTrends(companyId);
     const recentActivity = await db.getRecentActivity(companyId, 5);
     res.json({
-      ...stats,
-      trends,
-      swipesTrend: trends,
-      recentActivity,
+      ...dashboardStats,
+      trends: trends || [],
+      swipesTrend: trends || [],
+      recentActivity: recentActivity || [],
     });
   } catch (error: any) {
     logger.error({ err: error.message }, 'Failed to load dashboard');
