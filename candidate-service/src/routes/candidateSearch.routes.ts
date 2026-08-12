@@ -22,7 +22,6 @@ import { rankCandidatesForJob } from '../services/matchingScoringServiceClient.j
 import { getCandidateAccountsLastActiveBulk } from '../services/identityServiceClient.js';
 import { getCandidatesByIds } from '../services/candidateCoreServiceClient.js';
 import { getShortlistedSwipes } from '../services/matchingDecisionServiceClient.js';
-import * as monolithClient from '../services/monolithClient.js';
 import { logger } from '../utils/logger.js';
 import type { CandidateAccount, Job, Candidate } from '../types.js';
 

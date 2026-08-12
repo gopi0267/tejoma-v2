@@ -634,6 +634,26 @@ export const db = {
   getLatestCandidateDecision,
   getCandidateDecisions,
   getCandidateActiveDecisions,
+  getCandidateMatches,
 };
+
+export async function getCandidateMatches(candidateAccountId: number): Promise<any[]> {
+  try {
+    const result = await pool.query(
+      `SELECT mm.id, mm.job_id, mm.recruiter_id, mm.status, mm.created_at,
+              j.title as job_title, c.name as company_name, c.logo_url as company_logo
+       FROM mutual_matches mm
+       LEFT JOIN jobs j ON j.id = mm.job_id
+       LEFT JOIN companies c ON c.id = j.company_id
+       WHERE mm.candidate_account_id = $1
+       ORDER BY mm.created_at DESC`,
+      [candidateAccountId]
+    );
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching candidate matches:', error);
+    return [];
+  }
+}
 
 export { pool };
