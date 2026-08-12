@@ -15,7 +15,7 @@
  * directly.
  */
 import { db } from '../db.js';
-import { getSwipesForEvaluation } from '../services/monolithClient.js';
+import { getSwipesForEvaluation } from '../services/matchingDecisionServiceClient.js';
 import type { MatchEvaluationRun, Swipe } from '../types.js';
 
 export const DEFAULT_K = 10;

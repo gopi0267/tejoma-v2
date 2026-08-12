@@ -29,6 +29,10 @@ export const PORT = parseInt(process.env.PORT || '4011', 10);
 // verified here. JWT_SECRET below is retained only for any remaining legacy/internal use.
 // job-service owns the jobs table; shadowDataHealth.ts reads job titles from it via
 // /internal/jobs/by-ids instead of proxying to the monolith.
+// matching-decision-service owns the swipes table; evaluation.ts reads them from it via
+// /internal/swipes instead of proxying to the monolith.
+export const MATCHING_DECISION_SERVICE_URL = process.env.MATCHING_DECISION_SERVICE_URL || '';
+
 export const JOB_SERVICE_URL = process.env.JOB_SERVICE_URL || '';
 
 export const IDENTITY_JWT_PUBLIC_KEY = process.env.IDENTITY_JWT_PUBLIC_KEY || '';
