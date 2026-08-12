@@ -646,6 +646,12 @@ export const db = {
   getCandidateDecisions,
   getCandidateActiveDecisions,
   getCandidateMatches,
+  // internal.routes.ts calls db.query(...) directly. Fifth occurrence in this repo of a function
+  // being used off the exported db object without being on it (candidate-service db.pool,
+  // candidate-core-service db.query, job-service db.query, matching-decision-service
+  // getLatestSwipesByCandidateIds were the others) - each produced a runtime TypeError reported
+  // as a generic 500.
+  query: (text: string, params?: unknown[]) => pool.query(text, params),
   // candidateAnalytics.routes.ts reaches for db.pool.query directly for its aggregate reads.
   // Without this key that was `undefined.query(...)` - a TypeError on every analytics request,
   // caught by the route handler and reported as a generic 500.

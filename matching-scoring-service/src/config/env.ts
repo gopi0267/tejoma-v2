@@ -38,6 +38,13 @@ export const PORT = parseInt(process.env.PORT || '4021', 10);
 // verified here. JWT_SECRET below is retained only for any remaining legacy/internal use.
 export const IDENTITY_JWT_PUBLIC_KEY = process.env.IDENTITY_JWT_PUBLIC_KEY || '';
 
+// ML training reads its dataset from the services that own each part - see
+// services/trainingDataClient.ts.
+export const MATCHING_DECISION_SERVICE_URL = process.env.MATCHING_DECISION_SERVICE_URL || '';
+export const CANDIDATE_CORE_SERVICE_URL = process.env.CANDIDATE_CORE_SERVICE_URL || '';
+export const JOB_SERVICE_URL = process.env.JOB_SERVICE_URL || '';
+export const CANDIDATE_SERVICE_URL = process.env.CANDIDATE_SERVICE_URL || '';
+
 export const JWT_SECRET = process.env.JWT_SECRET || 'dev-only-insecure-secret';
 export const MONOLITH_INTERNAL_URL = process.env.MONOLITH_INTERNAL_URL || '';
 

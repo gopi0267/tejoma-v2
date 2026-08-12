@@ -150,7 +150,9 @@ export function computeMatchFeatures(job: Job, candidate: Candidate): MatchFeatu
   };
 }
 
-function computeBertCosineScore(candidate: Candidate, job: Job): number | null {
+// Exported for trainEnsembleModel.ts - the classification trainer moved into this service and
+// needs the same feature pipeline the scorer uses. Behaviour unchanged.
+export function computeBertCosineScore(candidate: Candidate, job: Job): number | null {
   if (!candidate.resume_embedding?.length || !job.description_embedding?.length) return null;
   const sim = vectorCosineSimilarity(candidate.resume_embedding, job.description_embedding);
   return Math.max(0, Math.min(100, Math.round(sim * 100)));
@@ -158,7 +160,8 @@ function computeBertCosineScore(candidate: Candidate, job: Job): number | null {
 
 // Order MUST match FEATURE_NAMES in python-services/matching-ml-service/ensemble.py exactly -
 // identical requirement to the monolith's own copy.
-function buildFeatureVector(features: MatchFeatures, cosineBertScore: number | null): number[] {
+// Exported for trainEnsembleModel.ts - see computeBertCosineScore above.
+export function buildFeatureVector(features: MatchFeatures, cosineBertScore: number | null): number[] {
   return [
     features.jaccardSkillScore / 100,
     features.cosineTextScore / 100,

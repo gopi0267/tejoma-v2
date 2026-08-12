@@ -6,21 +6,16 @@
  */
 import { Router } from 'express';
 import { requireAuth, requireRole } from '../middleware/auth.middleware.js';
-import { trainModel, MonolithProxyError } from '../services/monolithClient.js';
-import { activeModelType, isRetrainingInProgress, lastTrainingTimestamp, setActiveModelType } from '../matching/services.js';
+import { trainClassificationEnsemble } from '../matching/trainEnsembleModel.js';
+import { activeModelType, isRetrainingInProgress, lastTrainingTimestamp, setActiveModelType, setRetrainingStatus } from '../matching/services.js';
 import { getEnsembleHealth } from '../algorithms/ml-models.js';
 import { logger } from '../utils/logger.js';
 
 const router = Router();
 router.use(requireAuth);
 
-function handleProxyError(error: unknown, res: import('express').Response, fallbackMessage: string) {
-  if (error instanceof MonolithProxyError) {
-    return res.status(error.status >= 400 && error.status < 600 ? error.status : 502).json(error.body?.error ? error.body : { error: fallbackMessage });
-  }
-  logger.error({ err: (error as Error)?.message }, fallbackMessage);
-  res.status(500).json({ error: fallbackMessage });
-}
+// handleProxyError removed with the monolith proxy - every route here now serves locally and
+// reports its own errors directly.
 
 router.get('/ml/config', requireRole('recruiter', 'admin'), (_req, res) => {
   res.json({ activeModelType, isRetrainingInProgress, lastTrainingTimestamp });
@@ -36,10 +31,34 @@ router.post('/ml/config', requireRole('admin'), async (req, res) => {
 });
 
 router.post('/ml/train', requireRole('admin'), async (_req, res) => {
+  // Trains locally. This previously proxied to the monolith's /internal/ml/train
+  // (monolithClient.trainModel) - the last business-critical monolith dependency. The training
+  // logic now lives here in trainEnsembleModel.ts, reading from the services that own each
+  // dataset. Response shape is unchanged from what the monolith returned, so the ML admin UI
+  // needs no change.
   try {
-    res.json(await trainModel());
+    await setRetrainingStatus(true);
+    const report = await trainClassificationEnsemble();
+    await setRetrainingStatus(false);
+
+    const health = await getEnsembleHealth();
+    res.json({
+      success: true,
+      activeModelType,
+      isRetrainingInProgress,
+      lastTrainingTimestamp,
+      ensembleTrained: health?.ensembleTrained ?? false,
+      trainedSampleCount: health?.trainedSampleCount ?? 0,
+      trained: report.trained,
+      sampleCount: report.sampleCount,
+      cvAccuracy: report.cvAccuracy ?? null,
+      statusCorroboratedSamples: report.statusCorroboratedSamples ?? 0,
+      ...(report.reason ? { reason: report.reason } : {}),
+    });
   } catch (error) {
-    handleProxyError(error, res, 'Failed to retrain');
+    await setRetrainingStatus(false).catch(() => {});
+    logger.error({ err: (error as Error)?.message }, 'Failed to retrain');
+    res.status(500).json({ error: 'Failed to retrain: ' + (error as Error)?.message });
   }
 });
 

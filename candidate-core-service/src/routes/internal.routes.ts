@@ -228,7 +228,7 @@ router.get('/candidates/all', async (_req, res) => {
     const result = await db.query(
       `
       SELECT
-        id, company_id, name, email, skills, years_of_experience, current_location, resume_text
+        id, company_id, candidate_account_id, name, email, skills, years_of_experience, current_location, resume_text
       FROM candidates
       
       ORDER BY created_at DESC
@@ -237,6 +237,10 @@ router.get('/candidates/all', async (_req, res) => {
     const candidates = result.rows.map((row) => ({
       id: row.id,
       company_id: row.company_id,
+      // Additive: matching-scoring-service's ML training joins application status (keyed by
+      // candidate_account_id in candidate-service's DB) back to candidates. The monolith did that
+      // as a cross-database JOIN; across services it needs the link key on this side.
+      candidate_account_id: row.candidate_account_id,
       name: row.name,
       email: row.email,
       skills: parseSkills(row.skills),

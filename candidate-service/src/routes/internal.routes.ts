@@ -6,10 +6,31 @@
  */
 
 import { Router } from 'express';
-import { db } from '../db.js';
+import { db, pool } from '../db.js';
 import { logger } from '../utils/logger.js';
 
 const router = Router();
+
+// Unscoped application-status rows for ML training (matching-scoring-service's classification
+// ensemble). candidate_application_status is owned here and is keyed by candidate_id - the
+// candidate-core `candidates` id, the same key swipes use - so it needs no join at all; the
+// monolith's cross-database JOIN existed only because its copy of this table was keyed by
+// candidate_account_id. Training pools across every company, hence unscoped, matching the
+// monolith's own getAllApplicationStatusLinkedToCandidatesUnscoped. Not Gateway-reachable:
+// proxy.ts 404s /internal/* unconditionally.
+router.get('/application-status/all', async (_req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT candidate_id, job_id, status
+       FROM candidate_application_status
+       WHERE candidate_id IS NOT NULL AND job_id IS NOT NULL`
+    );
+    res.json({ rows: result.rows });
+  } catch (error) {
+    logger.error({ err: (error as Error).message }, 'Failed to get application status for training');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
 /**
  * GET /internal/matches/by-company?companyId=123&jobId=456
