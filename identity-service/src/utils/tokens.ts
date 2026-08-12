@@ -116,7 +116,17 @@ export function signCandidateAccessToken(payload: CandidateTokenPayload): string
 
 export function verifyCandidateAccessToken(token: string): CandidateTokenPayload | null {
   try {
-    return jwt.verify(token, jwtKeyPair.publicKey, { algorithms: ['RS256'] }) as CandidateTokenPayload;
+    const payload = jwt.verify(token, jwtKeyPair.publicKey, { algorithms: ['RS256'] }) as CandidateTokenPayload;
+
+    // Staff and candidate access tokens are signed with the SAME keypair, so a valid signature
+    // does not by itself prove this is a candidate token - a recruiter/admin token verifies here
+    // too, just carrying user_id/role/company_id instead of candidate_id. Callers then operate
+    // with req.candidate.candidate_id undefined, which reads as "this candidate has no data"
+    // rather than as an authorization failure. Same guard already applied to candidate-service
+    // and resume-service; this is the issuing service, so it matters most here.
+    if (typeof payload?.candidate_id !== 'number') return null;
+
+    return payload;
   } catch {
     return null;
   }
