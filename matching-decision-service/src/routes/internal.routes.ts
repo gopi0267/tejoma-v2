@@ -15,6 +15,16 @@ import { db } from '../db.js';
 
 const router = Router();
 
+// Registered BEFORE '/swipes' below only for readability - these are distinct literal paths, not
+// a param collision. Unscoped by design: Learning-to-Rank training pools swipes across every
+// company (matching-evaluation-service's learningToRank.ts), which is what previously forced it
+// to call the monolith's /training-data. Same convention as candidate-core's /candidates/all and
+// job-service's /jobs/all, which that same trainer already uses.
+router.get('/swipes/all', async (_req, res) => {
+  const swipes = await db.getAllSwipesUnscoped();
+  res.json({ swipes });
+});
+
 router.get('/swipes', async (req, res) => {
   const companyId = Number(req.query.companyId);
   if (!Number.isFinite(companyId)) return res.status(400).json({ error: 'companyId is required' });

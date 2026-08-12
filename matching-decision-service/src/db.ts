@@ -392,15 +392,33 @@ export async function recordSwipe(swipe: RecordSwipeInput): Promise<SwipeRow | n
   }
 }
 
+// Every swipe across every company. Learning-to-Rank training pools globally (the ranker is not
+// per-tenant), which is why this is deliberately unscoped - the same shape the monolith's own
+// getAllSwipesUnscoped had. Mirrors the existing unscoped reads other services already expose for
+// the same training/reindex use case (candidate-core /internal/candidates/all,
+// job-service /internal/jobs/all). NOT reachable through the API Gateway: /internal/* is 404'd
+// there unconditionally, so this stays a network-boundary-trusted, service-to-service read.
+export async function getAllSwipesUnscoped(): Promise<SwipeRow[]> {
+  try {
+    const result = await pool.query('SELECT * FROM swipes ORDER BY id');
+    return result.rows.map(coerceSwipeRow);
+  } catch (error) {
+    console.error('Error fetching all swipes:', error);
+    return [];
+  }
+}
+
 export const db = {
   healthCheck,
   upsertSwipe,
   getSwipes,
+  getAllSwipesUnscoped,
   getSwipeById,
   getShortlistedCandidateIds,
   getSwipeStats,
   getSwipeCountsByJob,
   getLatestSwipePerPair,
+  getLatestSwipesByCandidateIds,
   getSwipeHistoryForPair,
   upsertRecruiterNote,
   getRecruiterNote,

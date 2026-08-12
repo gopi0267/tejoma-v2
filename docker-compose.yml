@@ -39,6 +39,12 @@ x-service-urls: &service-urls
   MATCHING_SCORING_SERVICE_URL: http://matching-scoring-service:4021
   REALTIME_SERVICE_URL: http://realtime-service:4030
   RESUME_SERVICE_URL: http://resume-service:4031
+  # Python services. Previously set only on `app`, so every Node service that talks to them fell
+  # back to its localhost default and could not reach them from inside its own container -
+  # matching-evaluation-service's Learning-to-Rank trainer reported "Matching ML service
+  # unavailable" for exactly this reason.
+  MATCHING_ML_SERVICE_URL: http://matching-ml-service:8009
+  JD_NLP_SERVICE_URL: http://jd-nlp-service:8008
   MONOLITH_INTERNAL_URL: http://app:3006
   MONOLITH_URL: http://app:3006
 

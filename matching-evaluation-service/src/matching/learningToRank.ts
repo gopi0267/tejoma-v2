@@ -2,10 +2,11 @@
  * Ported from the monolith's src/matching/learningToRank.ts - Enterprise AI Matching
  * Architecture, Phase 3 Learning-to-Rank. Same orchestration logic byte-for-byte; the only
  * changes are where data comes from: db.getAllSwipesUnscoped/getAllCandidatesUnscoped/
- * getAllJobsUnscoped (local reads) became one monolithClient.getTrainingData() proxy call (swipes/
- * candidates/jobs remain monolith-owned), and calculateMatchScoresBatch (local, from
- * services.ts) became monolithClient.scoreBatch (proxy - the live scoring engine remains
- * monolith-owned). db.saveLtrModelVersion is unchanged - this service owns ltr_model_versions
+ * getAllJobsUnscoped (local reads) are now assembled by trainingDataClient.getTrainingData()
+ * from the services that own each dataset (matching-decision-service /internal/swipes/all,
+ * candidate-core-service /internal/candidates/all, job-service /internal/jobs/all), and
+ * calculateMatchScoresBatch is reached through matching-scoring-service, which owns that engine,
+ * via matchingScoringServiceClient.scoreBatchFeatureVectors. db.saveLtrModelVersion is unchanged - this service owns ltr_model_versions
  * directly. trainRanking/getRankerHealth (this service's own algorithms/ltr-models.ts) call the
  * Python Learning-to-Rank service directly, exactly as the monolith's copy always did.
  *
@@ -19,7 +20,8 @@
  */
 import { db } from '../db.js';
 import { logger } from '../utils/logger.js';
-import { getTrainingData, scoreBatch } from '../services/monolithClient.js';
+import { getTrainingData } from '../services/trainingDataClient.js';
+import { scoreBatchFeatureVectors } from '../services/matchingScoringServiceClient.js';
 import { trainRanking, type RankingGroup } from '../algorithms/ltr-models.js';
 import type { OpaqueCandidate, Swipe } from '../types.js';
 
@@ -67,9 +69,13 @@ export async function trainLearningToRank(): Promise<LearningToRankTrainingRepor
     }
     if (groupCandidates.length < MIN_GROUP_SIZE) continue;
 
-    const { results: scored } = await scoreBatch(job, groupCandidates, { skipGeminiSummary: true });
-    const samples = scored
-      .map((s, i) => ({ features: s.feature_vector, relevance: relevanceByIndex[i] }))
+    // Aligned by candidate id, NOT by position: matching-scoring-service's
+    // rank-candidates-for-job sorts its output by match_score, whereas the monolith's scoreBatch
+    // preserved input order. Zipping the sorted array against relevanceByIndex would pair each
+    // grade with the wrong candidate's feature vector and silently train on mislabelled data.
+    const featureVectorByCandidateId = await scoreBatchFeatureVectors(job, groupCandidates);
+    const samples = groupCandidates
+      .map((candidate, i) => ({ features: featureVectorByCandidateId.get(candidate.id), relevance: relevanceByIndex[i] }))
       .filter((s): s is { features: number[]; relevance: number } => Array.isArray(s.features));
 
     if (samples.length >= MIN_GROUP_SIZE) {

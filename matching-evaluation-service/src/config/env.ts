@@ -33,6 +33,11 @@ export const PORT = parseInt(process.env.PORT || '4011', 10);
 // /internal/swipes instead of proxying to the monolith.
 export const MATCHING_DECISION_SERVICE_URL = process.env.MATCHING_DECISION_SERVICE_URL || '';
 
+// Learning-to-Rank training reads candidates and reaches the scoring engine from the services
+// that own them - see trainingDataClient.ts / matchingScoringServiceClient.ts.
+export const CANDIDATE_CORE_SERVICE_URL = process.env.CANDIDATE_CORE_SERVICE_URL || '';
+export const MATCHING_SCORING_SERVICE_URL = process.env.MATCHING_SCORING_SERVICE_URL || '';
+
 export const JOB_SERVICE_URL = process.env.JOB_SERVICE_URL || '';
 
 export const IDENTITY_JWT_PUBLIC_KEY = process.env.IDENTITY_JWT_PUBLIC_KEY || '';
