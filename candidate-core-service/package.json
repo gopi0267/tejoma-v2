@@ -16,6 +16,7 @@
     "validate-schema": "tsx scripts/validate-schema.ts"
   },
   "dependencies": {
+    "@google/genai": "^2.4.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",

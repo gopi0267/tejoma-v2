@@ -88,7 +88,10 @@ router.post('/candidates', async (req, res) => {
     await mirrorAndNotifyCandidateCreate(created);
 
     // Remaining-monolith migration, Item 5 - CQRS: refresh recruiter review view (fire-and-forget).
-    refreshRecruiterReviewViewForCandidate(created.id);
+    // Was calling refreshRecruiterReviewViewForCandidate (singular) - undefined, since the
+    // actual exported function is plural and takes an array. That ReferenceError was uncaught,
+    // which is what turned this fire-and-forget call into a hard failure of the whole request.
+    refreshRecruiterReviewViewForCandidates([created.id]);
 
     res.status(201).json(mappedCandidate);
   } catch (error) {
@@ -113,7 +116,7 @@ router.delete('/candidates/:id', async (req, res) => {
     await mirrorDeleteCandidate(id, companyId);
 
     // Remaining-monolith migration, Item 5 - CQRS: refresh recruiter review view (fire-and-forget).
-    refreshRecruiterReviewViewForCandidate(id);
+    refreshRecruiterReviewViewForCandidates([id]);
 
     res.status(204).send();
   } catch (error) {
