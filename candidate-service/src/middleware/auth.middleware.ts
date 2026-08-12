@@ -42,7 +42,19 @@ function extractToken(req: Request): string | null {
 
 function verifyCandidateAccessToken(token: string): CandidateTokenPayload | null {
   try {
-    return jwt.verify(token, IDENTITY_JWT_PUBLIC_KEY, { algorithms: ['RS256'] }) as CandidateTokenPayload;
+    const payload = jwt.verify(token, IDENTITY_JWT_PUBLIC_KEY, { algorithms: ['RS256'] }) as CandidateTokenPayload;
+
+    // Signature validity alone does not make this a CANDIDATE token. Identity Service signs both
+    // candidate and staff access tokens with the same RS256 key, so a recruiter/admin token
+    // verifies here perfectly well - it simply carries user_id/role/company_id instead of
+    // candidate_id. Without this check every candidate route accepted staff tokens, then ran its
+    // queries with candidate_account_id = undefined and answered 200 with an empty list, so an
+    // authorization failure was indistinguishable from "this candidate has no data".
+    // Confirmed by test: a recruiter token returned 200 {"decisions":[]} on
+    // /api/candidate-decisions where it must return 401.
+    if (typeof payload?.candidate_id !== 'number') return null;
+
+    return payload;
   } catch {
     return null;
   }
