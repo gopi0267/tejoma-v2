@@ -14,6 +14,8 @@ import { logger } from '../utils/logger.js';
 
 const ML_SERVICE_URL = process.env.MATCHING_ML_SERVICE_URL || 'http://localhost:8009';
 const REQUEST_TIMEOUT_MS = 8000;
+// Batch training budget - see trainEnsemble below.
+const TRAIN_TIMEOUT_MS = 300000;
 
 export interface TrainSample {
   features: number[];
@@ -64,7 +66,15 @@ async function postJson<T>(path: string, body: any, timeoutMs = REQUEST_TIMEOUT_
 }
 
 export async function trainEnsemble(samples: TrainSample[]): Promise<TrainResult | null> {
-  return postJson<TrainResult>('/train', { samples }, REQUEST_TIMEOUT_MS * 4);
+  // Training is an admin-triggered BATCH job, not the scoring hot path, so it gets its own
+  // generous budget rather than a multiple of the per-request timeout. At REQUEST_TIMEOUT_MS * 4
+  // (32s) a real training run of 116 samples across RandomForest + XGBoost + LightGBM with
+  // cross-validation exceeded the client timeout and returned null, which the caller reported as
+  // 'ML service unavailable' - while the Python service had in fact trained successfully
+  // (its /health showed ensembleTrained=true, trainedSampleCount=116, matching the request).
+  // A successful train reported as a failure is worse than a slow one: an operator retrains in a
+  // loop, each run costing real compute.
+  return postJson<TrainResult>('/train', { samples }, TRAIN_TIMEOUT_MS);
 }
 
 /**
