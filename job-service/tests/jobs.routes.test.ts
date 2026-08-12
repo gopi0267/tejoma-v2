@@ -6,17 +6,11 @@
  * (list/create/update/delete) proxies to a real, minimal stand-in for the monolith.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import jwt from 'jsonwebtoken';
-import { config } from 'dotenv';
 import { startMockMonolith, type MockMonolith } from './helpers/mockMonolith.js';
+import { generateRecruiterToken, generateCandidateToken } from './helpers/tokens.js';
 
-config({ path: '.env.local' });
-
-// job-service's own .env.local deliberately has no JWT_SECRET (falls through to config/env.ts's
-// default) - match that default here, same reasoning as candidate-service's own test suite.
-const DEV_SECRET = process.env.JWT_SECRET || 'dev-only-insecure-secret';
-const recruiterCookie = () => `access_token=${jwt.sign({ user_id: 501, email: 'r@tejoma.com', name: 'Recruiter', company_id: 870, role: 'recruiter' }, DEV_SECRET, { expiresIn: '15m' })}`;
-const candidateCookie = () => `access_token=${jwt.sign({ user_id: 900, email: 'c@tejoma.com', name: 'Candidate', company_id: 870, role: 'candidate' }, DEV_SECRET, { expiresIn: '15m' })}`;
+const recruiterCookie = () => `access_token=${generateRecruiterToken({ company_id: 870 })}`;
+const candidateCookie = () => `access_token=${generateCandidateToken({ company_id: 870 })}`;
 
 let monolith: MockMonolith;
 let candidateCore: MockMonolith;
@@ -88,7 +82,12 @@ describe('GET /api/jobs (real cutover - remaining-monolith migration, Item 1)', 
     const request = (await import('supertest')).default;
     const beforeMonolithCalls = monolith.received.length;
     candidateCore.responses['/internal/candidates/count'] = { status: 200, body: { count: 5 } };
-    matchingDecision.responses['/internal/swipes/counts-by-job'] = { status: 200, body: { counts: [{ jobId: JOB.id, reviewed: 10, accepted: 2, rejected: 3, saved: 5 }] } };
+    matchingDecision.responses['/internal/swipes/counts-by-job'] = {
+      status: 200,
+      body: {
+        [JOB.id]: { total: 10, accepted: 2, rejected: 3, pending: 0 }
+      }
+    };
 
     const res = await request(app).get('/api/jobs').set('Cookie', recruiterCookie());
     expect(res.status).toBe(200);
@@ -99,7 +98,7 @@ describe('GET /api/jobs (real cutover - remaining-monolith migration, Item 1)', 
     expect(res.body[0].reviewed).toBe(10);
     expect(res.body[0].accepted).toBe(2);
     expect(res.body[0].rejected).toBe(3);
-    expect(res.body[0].saved).toBe(5);
+    expect(res.body[0].saved).toBe(0);
     expect(res.body[0].acceptance_rate).toBe(20);
 
     // Zero calls to monolith for this endpoint - it's a real cutover now.
@@ -119,7 +118,7 @@ describe('GET /api/jobs (real cutover - remaining-monolith migration, Item 1)', 
   it('returns sensible defaults when swipe counts are missing', async () => {
     const request = (await import('supertest')).default;
     candidateCore.responses['/internal/candidates/count'] = { status: 200, body: { count: 3 } };
-    matchingDecision.responses['/internal/swipes/counts-by-job'] = { status: 200, body: { counts: [] } };
+    matchingDecision.responses['/internal/swipes/counts-by-job'] = { status: 200, body: {} };
 
     const res = await request(app).get('/api/jobs').set('Cookie', recruiterCookie());
     expect(res.status).toBe(200);
@@ -215,9 +214,10 @@ describe('GET /api/jobs/:id (REAL cutover - no monolith call)', () => {
 
   it('returns 404 for a job scoped to a different company, without calling either upstream', async () => {
     const request = (await import('supertest')).default;
+    const { generateAdminToken } = await import('./helpers/tokens.js');
     const beforeCcCalls = candidateCore.received.length;
     await pool.query('INSERT INTO companies (id, name, company_slug) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING', [999, 'Company 999', 'company-999']);
-    const res = await request(app).get(`/api/jobs/${JOB.id}`).set('Cookie', `access_token=${jwt.sign({ user_id: 1, email: 'x@tejoma.com', name: 'X', company_id: 999, role: 'admin' }, DEV_SECRET, { expiresIn: '15m' })}`);
+    const res = await request(app).get(`/api/jobs/${JOB.id}`).set('Cookie', `access_token=${generateAdminToken({ company_id: 999 })}`);
     expect(res.status).toBe(404);
     expect(candidateCore.received.length).toBe(beforeCcCalls);
   });

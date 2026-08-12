@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import type { CookieOptions } from 'express';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-only-insecure-secret';
+const IDENTITY_JWT_PUBLIC_KEY = process.env.IDENTITY_JWT_PUBLIC_KEY || '';
 
 export const ACCESS_TOKEN_TTL = '15m';
 export const ACCESS_TOKEN_TTL_MS = 15 * 60 * 1000;
@@ -25,7 +26,8 @@ export function signAccessToken(payload: AccessTokenPayload): string {
 
 export function verifyAccessToken(token: string): AccessTokenPayload | null {
   try {
-    return jwt.verify(token, JWT_SECRET) as AccessTokenPayload;
+    // Verify RS256 tokens from Identity Service using the public key
+    return jwt.verify(token, IDENTITY_JWT_PUBLIC_KEY, { algorithms: ['RS256'] }) as AccessTokenPayload;
   } catch {
     return null;
   }

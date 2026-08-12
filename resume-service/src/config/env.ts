@@ -1,4 +1,5 @@
 import { config } from 'dotenv';
+import { normalizePem } from '../utils/pem.js';
 
 config({ path: '.env.local' });
 
@@ -15,6 +16,10 @@ export const DB_PASSWORD = process.env.DB_PASSWORD || '';
 
 // JWT
 export const JWT_SECRET = process.env.JWT_SECRET || 'dev-only-insecure-secret';
+export const IDENTITY_JWT_PUBLIC_KEY = process.env.IDENTITY_JWT_PUBLIC_KEY ? normalizePem(process.env.IDENTITY_JWT_PUBLIC_KEY) : '';
+
+// Gemini API
+export const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 
 // Upload Service
 export const UPLOAD_SERVICE_URL = process.env.UPLOAD_SERVICE_URL || '';
@@ -40,6 +45,7 @@ export const RESUME_STORAGE_DIR = process.env.RESUME_STORAGE_DIR || './uploads/r
 export const TEMP_UPLOAD_DIR = process.env.TEMP_UPLOAD_DIR || './uploads/temp';
 
 const REQUIRED_ALWAYS = ['DB_HOST', 'DB_PORT', 'DB_NAME', 'DB_USER', 'MONOLITH_INTERNAL_URL', 'UPLOAD_SERVICE_URL', 'REDIS_URL'];
+const REQUIRED_PRODUCTION = ['IDENTITY_JWT_PUBLIC_KEY'];
 
 const fatal: string[] = [];
 
@@ -47,8 +53,10 @@ for (const key of REQUIRED_ALWAYS) {
   if (!process.env[key]) fatal.push(key);
 }
 
-if (IS_PRODUCTION && !process.env.JWT_SECRET) {
-  fatal.push('JWT_SECRET');
+if (IS_PRODUCTION) {
+  for (const key of REQUIRED_PRODUCTION) {
+    if (!process.env[key]) fatal.push(key);
+  }
 }
 
 if (fatal.length > 0) {

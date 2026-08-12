@@ -337,21 +337,20 @@ services:
       - .env.local
     environment:
       NODE_ENV: production
+      DB_HOST: host.docker.internal
       MONOLITH_INTERNAL_URL: http://app:3006
+      REDIS_URL: redis://redis:6379
+      UPLOAD_SERVICE_URL: http://app:3006
     depends_on:
       app:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     volumes:
       - ./uploads/resumes:/app/uploads/resumes
     restart: unless-stopped
     networks:
       - internal
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4007/live"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 15s
     logging:
       driver: json-file
       options:
@@ -368,6 +367,9 @@ services:
       DB_HOST: host.docker.internal
       DB_NAME: tejoma_recruiting_service
       MONOLITH_INTERNAL_URL: http://app:3006
+      CANDIDATE_SERVICE_URL: http://candidate-service:4016
+      JOB_SERVICE_URL: http://job-service:4018
+      CANDIDATE_CORE_SERVICE_URL: http://candidate-core-service:4019
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -655,6 +657,7 @@ services:
       DB_HOST: host.docker.internal
       DB_NAME: tejoma_candidate_core
       MONOLITH_INTERNAL_URL: http://app:3006
+      MATCHING_DECISION_SERVICE_URL: http://matching-decision-service:4020
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:

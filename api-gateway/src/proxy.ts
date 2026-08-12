@@ -84,6 +84,8 @@ function proxyTo(target: string, name: string) {
 const ROUTES: { prefix: string; target: string; name: string; exact?: boolean }[] = [
   { prefix: '/api/auth', target: IDENTITY_SERVICE_URL, name: 'identity-service' },
   { prefix: '/api/candidate-auth', target: IDENTITY_SERVICE_URL, name: 'identity-service' },
+  // Development test endpoints - only active in non-production mode
+  { prefix: '/api/test', target: IDENTITY_SERVICE_URL, name: 'identity-service' },
   // Batch 21 - staff user management (admin CRUD on recruiters within their own company), added
   // to Identity Service since it already owns users/refresh_tokens/password_history in full.
   { prefix: '/api/users', target: IDENTITY_SERVICE_URL, name: 'identity-service' },

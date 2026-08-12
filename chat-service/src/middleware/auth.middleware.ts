@@ -1,12 +1,10 @@
 /**
- * Staff auth verification for Chat Service - verifies the exact token
- * src/utils/tokens.ts's signAccessToken issues today (HS256, shared JWT_SECRET), not the
- * RS256/JWKS scheme platform-governance-service uses. Identical reasoning and identical port to
- * jd-parser-service's auth.middleware.ts (Batch 15) - see config/env.ts's header comment.
+ * Staff auth verification for Chat Service - verifies RS256 tokens
+ * issued by Identity Service using the IDENTITY_JWT_PUBLIC_KEY from environment.
  */
 import jwt from 'jsonwebtoken';
 import type { Request, Response, NextFunction } from 'express';
-import { JWT_SECRET } from '../config/env.js';
+import { IDENTITY_JWT_PUBLIC_KEY } from '../config/env.js';
 
 export interface AccessTokenPayload {
   user_id: number;
@@ -39,8 +37,15 @@ function extractToken(req: Request): string | null {
 
 function verifyAccessToken(token: string): AccessTokenPayload | null {
   try {
-    return jwt.verify(token, JWT_SECRET) as AccessTokenPayload;
-  } catch {
+    return jwt.verify(token, IDENTITY_JWT_PUBLIC_KEY, { algorithms: ['RS256'] }) as AccessTokenPayload;
+  } catch (err) {
+    const error = err as Error;
+    console.error('[auth] JWT verification failed:', {
+      message: error.message,
+      keyLength: IDENTITY_JWT_PUBLIC_KEY?.length || 0,
+      hasKey: !!IDENTITY_JWT_PUBLIC_KEY,
+      tokenPreview: token.substring(0, 50)
+    });
     return null;
   }
 }

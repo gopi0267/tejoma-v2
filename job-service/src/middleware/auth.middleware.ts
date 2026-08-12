@@ -1,14 +1,18 @@
 /**
- * Staff auth verification for Job Service - verifies the exact token
- * src/utils/tokens.ts's signAccessToken issues today (HS256, shared JWT_SECRET), not the
- * RS256/JWKS scheme platform-governance-service uses. Identical pattern to
- * matching-evaluation-service's/analytics-service's own middleware/auth.middleware.ts, copied
- * verbatim - gates this service's new public /api/jobs* routes; /internal/* stays
- * network-boundary-trusted, unauthenticated.
+ * Staff auth verification for Job Service - verifies RS256 tokens issued by Identity Service.
+ * Identity Service has completed its cutover to RS256. This middleware verifies tokens using
+ * Identity Service's public key (injected from IDENTITY_JWT_PUBLIC_KEY environment variable).
  */
 import jwt from 'jsonwebtoken';
 import type { Request, Response, NextFunction } from 'express';
-import { JWT_SECRET } from '../config/env.js';
+import { IDENTITY_JWT_PUBLIC_KEY } from '../config/env.js';
+
+// Debug log on load
+if (!IDENTITY_JWT_PUBLIC_KEY) {
+  console.error('[STARTUP] IDENTITY_JWT_PUBLIC_KEY is not set!');
+} else {
+  console.log('[STARTUP] IDENTITY_JWT_PUBLIC_KEY loaded, length:', IDENTITY_JWT_PUBLIC_KEY.length);
+}
 
 export interface AccessTokenPayload {
   user_id: number;
@@ -41,8 +45,14 @@ function extractToken(req: Request): string | null {
 
 function verifyAccessToken(token: string): AccessTokenPayload | null {
   try {
-    return jwt.verify(token, JWT_SECRET) as AccessTokenPayload;
-  } catch {
+    if (!IDENTITY_JWT_PUBLIC_KEY) {
+      throw new Error('PUBLIC_KEY_NOT_SET');
+    }
+    return jwt.verify(token, IDENTITY_JWT_PUBLIC_KEY, { algorithms: ['RS256'] }) as AccessTokenPayload;
+  } catch (err: any) {
+    // Return error details in development only
+    const details = process.env.NODE_ENV === 'production' ? '' : ` [${err.message}]`;
+    console.error(`[auth verification failed]${details}`);
     return null;
   }
 }

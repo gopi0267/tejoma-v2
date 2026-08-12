@@ -4,6 +4,7 @@ import helmet from 'helmet';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import pinoHttp from 'pino-http';
+import { randomUUID } from 'crypto';
 import { logger } from './utils/logger.js';
 import { IS_PRODUCTION } from './config/env.js';
 import healthRoutes from './routes/health.routes.js';
@@ -40,7 +41,7 @@ app.use(express.json({ limit: '100kb' }));
 
 // Request ID middleware
 app.use((req: express.Request, res: express.Response, next: express.NextFunction) => {
-  (req as any).requestId = req.headers['x-request-id'] || require('crypto').randomUUID();
+  (req as any).requestId = req.headers['x-request-id'] || randomUUID();
   res.setHeader('x-request-id', (req as any).requestId);
   next();
 });

@@ -27,6 +27,7 @@ import authRoutes from './routes/auth.routes.js';
 import candidateAuthRoutes from './routes/candidate-auth.routes.js';
 import usersRoutes from './routes/users.routes.js';
 import internalRoutes from './routes/internal.routes.js';
+import devTestRoutes from './routes/dev-test.routes.js';
 import { IS_PRODUCTION } from './config/env.js';
 
 const app = express();
@@ -76,6 +77,8 @@ app.use('/api', candidateAuthRoutes);
 // Batch 21 - staff user management (admin CRUD on recruiters within their own company). Same
 // requireAuth/requireRole gate as authRoutes itself - see users.routes.ts's header comment.
 app.use('/api', usersRoutes);
+// Development test routes - only available in non-production mode
+app.use('/api', devTestRoutes);
 // Not mounted under /api - internal, service-to-service only (see internal.routes.ts's header
 // comment), same convention as platform-governance-service's/tenant-directory-service's own
 // /internal/* routes.

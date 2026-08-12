@@ -44,6 +44,7 @@ import { OAuth2Client } from 'google-auth-library';
 import { db } from '../db.js';
 import {
   signAccessToken,
+  signCandidateAccessToken,
   generateRefreshToken,
   hashRefreshToken,
   accessTokenCookieOptions,
@@ -60,6 +61,7 @@ import { sendOTPEmail } from '../utils/email.js';
 import { sendOTPSms } from '../utils/sms.js';
 import { otpRequestLimiter } from '../middleware/rateLimit.middleware.js';
 import { validatePassword } from '../utils/password.js';
+import { IS_PRODUCTION } from '../config/env.js';
 import type { User } from '../types.js';
 
 const router = Router();

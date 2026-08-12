@@ -5,11 +5,14 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies
-RUN npm ci --only=production
+# Install dependencies (including devDeps since tsx is needed for runtime)
+RUN npm install
 
 # Copy source code
 COPY . .
+
+# Create empty .env.local so dotenv doesn't fail; docker-compose's env_file will override
+RUN touch .env.local
 
 # Expose port
 EXPOSE 4031

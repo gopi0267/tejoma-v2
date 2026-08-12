@@ -98,7 +98,7 @@ router.post('/jobs', async (req, res) => {
     await monolithClient.mirrorAndNotifyJobCreate(created);
 
     // Remaining-monolith migration, Item 5 - CQRS: refresh recruiter review view (fire-and-forget).
-    refreshRecruiterReviewViewForJob(created.id);
+    refreshRecruiterReviewViewForJobs([created.id]);
 
     res.status(201).json(created);
   } catch (error) {
@@ -149,7 +149,7 @@ router.put('/jobs/:id', async (req, res) => {
     await monolithClient.mirrorAndNotifyJobUpdate(updated);
 
     // Remaining-monolith migration, Item 5 - CQRS: refresh recruiter review view (fire-and-forget).
-    refreshRecruiterReviewViewForJob(id);
+    refreshRecruiterReviewViewForJobs([id]);
 
     res.json(updated);
   } catch (error) {
@@ -175,7 +175,7 @@ router.delete('/jobs/:id', async (req, res) => {
     await monolithClient.mirrorDeleteJob(id, companyId);
 
     // Remaining-monolith migration, Item 5 - CQRS: refresh recruiter review view (fire-and-forget).
-    refreshRecruiterReviewViewForJob(id);
+    refreshRecruiterReviewViewForJobs([id]);
 
     res.status(200).json({ success: true, message: 'Job deleted successfully' });
   } catch (error) {

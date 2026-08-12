@@ -78,7 +78,26 @@ router.get('/recruiter-review', async (req, res) => {
     if (RECRUITER_REVIEW_LIST_CUTOVER_ENABLED) {
       // Read from materialized view (real cutover)
       const viewResult = await db.getRecruiterReviewListFromView(companyId, parsed.data);
-      return res.json(viewResult);
+      // Transform to match monolith response format
+      return res.json({
+        data: viewResult.rows,
+        page: parsed.data.page || 1,
+        pageSize: parsed.data.pageSize || 25,
+        totalRecords: viewResult.total,
+        totalPages: Math.max(1, Math.ceil(viewResult.total / (parsed.data.pageSize || 25))),
+        stats: {
+          totalReviewed: 0,
+          accepted: 0,
+          rejected: 0,
+          saved: 0,
+          acceptanceRate: 0,
+          rejectionRate: 0,
+          avgMatchScore: 0,
+          today: 0,
+          thisWeek: 0,
+          thisMonth: 0,
+        },
+      });
     }
 
     // Fall back to monolith proxy (default behavior)

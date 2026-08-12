@@ -35,7 +35,7 @@ export const NODE_ENV = process.env.NODE_ENV || 'development';
 export const IS_PRODUCTION = NODE_ENV === 'production';
 export const PORT = parseInt(process.env.PORT || '4020', 10);
 
-export const JWT_SECRET = process.env.JWT_SECRET || 'dev-only-insecure-secret';
+export const IDENTITY_JWT_PUBLIC_KEY = process.env.IDENTITY_JWT_PUBLIC_KEY || '';
 export const MONOLITH_INTERNAL_URL = process.env.MONOLITH_INTERNAL_URL || '';
 export const JOB_SERVICE_URL = process.env.JOB_SERVICE_URL || '';
 export const CANDIDATE_CORE_SERVICE_URL = process.env.CANDIDATE_CORE_SERVICE_URL || '';

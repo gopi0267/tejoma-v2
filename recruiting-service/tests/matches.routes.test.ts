@@ -18,6 +18,7 @@ let app: import('express').Express;
 beforeAll(async () => {
   monolith = await startMockMonolith();
   process.env.MONOLITH_INTERNAL_URL = monolith.url;
+  process.env.RECRUITER_MATCHES_CUTOVER_ENABLED = 'false'; // Disable cutover for monolith proxy tests
   vi.resetModules();
   ({ app } = await import('../src/server.js'));
 });

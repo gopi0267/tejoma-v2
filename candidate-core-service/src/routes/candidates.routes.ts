@@ -16,7 +16,7 @@ import { db, mapRowToCandidate } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.middleware.js';
 import { mirrorAndNotifyCandidateCreate, mirrorDeleteCandidate, bulkUploadCandidates, importCandidates, MonolithProxyError } from '../services/monolithClient.js';
 import { candidatePayloadFromExtracted } from '../services/candidatePayload.js';
-import { refreshRecruiterReviewViewForCandidate } from '../services/matchingDecisionServiceClient.js';
+import { refreshRecruiterReviewViewForCandidates } from '../services/matchingDecisionServiceClient.js';
 import { logger } from '../utils/logger.js';
 import type { Candidate } from '../types.js';
 import { getResumeDetail } from './candidates/getResumeDetail.js';

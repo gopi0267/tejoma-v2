@@ -14,7 +14,7 @@ import { parsePhoneNumberFromString } from 'libphonenumber-js';
 import { db } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.middleware.js';
 import { validatePassword } from '../utils/password.js';
-import { refreshRecruiterReviewViewForRecruiter } from '../services/matchingDecisionServiceClient.js';
+import { refreshRecruiterReviewViewForRecruiters } from '../services/matchingDecisionServiceClient.js';
 import type { User } from '../types.js';
 
 const router = Router();
@@ -255,7 +255,7 @@ router.put('/users/:id', async (req, res) => {
     // Remaining-monolith migration, Item 5 - CQRS: refresh recruiter review view (fire-and-forget).
     // If recruiter name changed, refresh the view rows where this recruiter is involved.
     if (data.name && data.name !== target.full_name) {
-      refreshRecruiterReviewViewForRecruiter(id);
+      refreshRecruiterReviewViewForRecruiters([id]);
     }
 
     res.json(sanitizeUser(updated));

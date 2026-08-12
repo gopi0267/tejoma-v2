@@ -11,6 +11,7 @@ const router = Router();
 // Recruiters see their own dashboard/analytics; admins see everything. Not admin-only, matching
 // the monolith's own analytics.routes.ts (Dashboard.tsx/Analytics.tsx/JobManagement.tsx are used
 // by regular recruiters today).
+
 router.use(requireAuth, requireRole('recruiter', 'admin'));
 
 router.get('/analytics/dashboard', async (req, res) => {

@@ -1,8 +1,7 @@
 /**
- * Staff auth verification for Matching Decision Service - verifies the exact token
- * src/utils/tokens.ts's signAccessToken issues today (HS256, shared JWT_SECRET), not the
- * RS256/JWKS scheme platform-governance-service uses. Identical pattern to
- * matching-scoring-service's/job-service's own middleware/auth.middleware.ts, copied verbatim.
+ * Staff auth verification for Matching Decision Service - verifies RS256 tokens issued by Identity Service.
+ * Identity Service has completed its cutover to RS256. This middleware verifies tokens using
+ * Identity Service's public key (injected from IDENTITY_JWT_PUBLIC_KEY environment variable).
  *
  * New in Remaining-monolith migration, Step 6 - this service's first-ever public, gateway-routed
  * HTTP surface (/api/matches/*, /api/swipes*); /internal/* stays network-boundary-trusted,
@@ -10,7 +9,7 @@
  */
 import jwt from 'jsonwebtoken';
 import type { Request, Response, NextFunction } from 'express';
-import { JWT_SECRET } from '../config/env.js';
+import { IDENTITY_JWT_PUBLIC_KEY } from '../config/env.js';
 
 export interface AccessTokenPayload {
   user_id: number;
@@ -43,7 +42,7 @@ function extractToken(req: Request): string | null {
 
 function verifyAccessToken(token: string): AccessTokenPayload | null {
   try {
-    return jwt.verify(token, JWT_SECRET) as AccessTokenPayload;
+    return jwt.verify(token, IDENTITY_JWT_PUBLIC_KEY, { algorithms: ['RS256'] }) as AccessTokenPayload;
   } catch {
     return null;
   }

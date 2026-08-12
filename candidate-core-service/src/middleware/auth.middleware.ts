@@ -1,14 +1,12 @@
 /**
- * Staff auth verification for Candidate Core Service - verifies the exact token
- * src/utils/tokens.ts's signAccessToken issues today (HS256, shared JWT_SECRET), not the
- * RS256/JWKS scheme platform-governance-service uses. Identical pattern to
- * matching-evaluation-service's/analytics-service's own middleware/auth.middleware.ts, copied
- * verbatim - gates this service's new public /api/candidates* routes; /internal/* stays
+ * Staff auth verification for Candidate Core Service - verifies RS256 tokens
+ * issued by Identity Service using the IDENTITY_JWT_PUBLIC_KEY from environment.
+ * Gates this service's public /api/candidates* routes; /internal/* stays
  * network-boundary-trusted, unauthenticated.
  */
 import jwt from 'jsonwebtoken';
 import type { Request, Response, NextFunction } from 'express';
-import { JWT_SECRET } from '../config/env.js';
+import { IDENTITY_JWT_PUBLIC_KEY } from '../config/env.js';
 
 export interface AccessTokenPayload {
   user_id: number;
@@ -41,8 +39,15 @@ function extractToken(req: Request): string | null {
 
 function verifyAccessToken(token: string): AccessTokenPayload | null {
   try {
-    return jwt.verify(token, JWT_SECRET) as AccessTokenPayload;
-  } catch {
+    return jwt.verify(token, IDENTITY_JWT_PUBLIC_KEY, { algorithms: ['RS256'] }) as AccessTokenPayload;
+  } catch (err) {
+    const error = err as Error;
+    console.error('[auth] JWT verification failed:', {
+      message: error.message,
+      keyLength: IDENTITY_JWT_PUBLIC_KEY?.length || 0,
+      hasKey: !!IDENTITY_JWT_PUBLIC_KEY,
+      tokenPreview: token.substring(0, 50)
+    });
     return null;
   }
 }

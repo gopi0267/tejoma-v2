@@ -1,13 +1,11 @@
 /**
- * Auth verification for Resume Service - the first Tier 0 service needing BOTH staff and
- * candidate auth (POST /parse-resume is recruiter/admin-only; POST/GET /candidate-resume/* are
- * candidate-only), mirroring the monolith's own combined src/middleware/auth.middleware.ts file
- * exactly (same two token shapes, same HS256/shared-JWT_SECRET scheme, not JWKS - see
- * config/env.ts's header comment for why).
+ * Auth verification for Resume Service - handles both staff and candidate auth.
+ * Staff auth uses RS256 tokens from Identity Service.
+ * Candidate auth still uses HS256 (legacy monolith tokens).
  */
 import jwt from 'jsonwebtoken';
 import type { Request, Response, NextFunction } from 'express';
-import { JWT_SECRET } from '../config/env.js';
+import { JWT_SECRET, IDENTITY_JWT_PUBLIC_KEY } from '../config/env.js';
 
 // ==================== STAFF AUTH ====================
 
@@ -56,9 +54,16 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
     return res.status(401).json({ error: 'Authentication required' });
   }
   try {
-    req.user = jwt.verify(token, JWT_SECRET) as AccessTokenPayload;
+    req.user = jwt.verify(token, IDENTITY_JWT_PUBLIC_KEY, { algorithms: ['RS256'] }) as AccessTokenPayload;
     next();
-  } catch {
+  } catch (err) {
+    const error = err as Error;
+    console.error('[auth] JWT verification failed:', {
+      message: error.message,
+      keyLength: IDENTITY_JWT_PUBLIC_KEY?.length || 0,
+      hasKey: !!IDENTITY_JWT_PUBLIC_KEY,
+      tokenPreview: token.substring(0, 50)
+    });
     return res.status(401).json({ error: 'Invalid or expired session' });
   }
 }
