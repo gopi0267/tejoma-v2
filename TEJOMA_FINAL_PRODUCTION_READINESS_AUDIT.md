@@ -1,197 +1,191 @@
 # TEJOMA FINAL PRODUCTION READINESS AUDIT
 
 **Date:** 2026-08-12
-**Method:** Independent runtime verification — real authenticated HTTP requests through nginx, real SQL queries against every database, monolith physically stopped and confirmed unreachable during testing.
-**Supersedes:** `TEJOMA_FINAL_PRODUCTION_MICROSERVICES_REPORT.md` (same date, earlier in this session), which claimed PRODUCTION READY based on configuration inspection and container health checks. That claim is **retracted**. At the time it was written, the entire API surface had been returning 502 for hours.
+**Method:** Runtime verification only — real authenticated HTTP requests through nginx, real SQL against every database, monolith physically stopped and confirmed unreachable from inside the Docker network during every monolith-off test.
+**Supersedes:** the earlier same-day `TEJOMA_FINAL_PRODUCTION_MICROSERVICES_REPORT.md` (retracted — it claimed PRODUCTION READY from configuration inspection while the entire API surface was returning 502) and the first revision of this file.
 
 ---
 
-## 1. Actual Architecture (runtime-verified)
+## 1. Final Decision
+
+# B. PRODUCTION READY WITH BLOCKERS
+
+The complete business-critical application now runs with the monolith **completely stopped**: 20 of 21 tested endpoints return real data, and every critical write path (candidate decision, recruiter job creation, recruiter swipe, JD parsing, candidate creation) succeeds. That is a genuine change of state from the previous audit, where candidate job browsing was structurally impossible and three write paths were broken.
+
+It is **not** A, because one authenticated surface (`POST /api/chat`) still returns 401 with a valid staff token and the cause is unresolved, and because several verification areas remain unexecuted (§9). Under the stated rule, A requires the *complete* business-critical application proven working with the monolith off; chat is part of that application and is not proven.
+
+---
+
+## 2. Actual Architecture (runtime-verified)
 
 ```
 Browser
-  → nginx :443 (TLS, serves SPA + reverse-proxies /api/*)
-      → api-gateway :4000 (explicit route table, no monolith fallback: MONOLITH_FALLBACK_ENABLED=false)
-          → 19 Tier-0 Node/Python microservices (each own Postgres DB, native on host)
-          → app :3006 (monolith — kept running for rollback only)
-  Redis :6379 — pub/sub for realtime-service + BullMQ retrain queue
+  → nginx :443  (TLS, serves SPA; reverse-proxies /api/* ; DNS re-resolved per request)
+      → api-gateway :4000  (explicit route table; MONOLITH_FALLBACK_ENABLED=false, CANARY_PERCENTAGE=100)
+          → 21 Tier-0 microservices, each with its own Postgres database
+          → app :3006  (monolith — running for rollback only; serves no verified business traffic)
+  Redis :6379 — pub/sub for realtime-service, BullMQ retrain queue
+  Postgres 18.1 — native on the host, 22 tejoma_* databases (not containerized)
 ```
 
-Only nginx (80/443), grafana (3000), and prometheus (9090) publish ports to the host. No other service is reachable from outside the Docker network — a fact that invalidated a full session's worth of prior "tests" that curled `localhost:4000` directly and got silent connection failures, misread as absence of evidence.
+Only nginx (80/443), grafana (3000) and prometheus (9090) publish host ports. **`localhost` does not resolve to the Docker port forwarder on this host — `127.0.0.1` does.** All testing used `https://127.0.0.1`.
 
-## 2. Service Inventory (28 containers, runtime `docker compose ps`)
+## 3. Service Inventory
 
-29 services total: 1 monolith (`app`), 21 Tier-0 microservices (19 Node + 2 Python: `jd-nlp-service`, `matching-ml-service`), nginx, redis, and 6 observability/infra containers (grafana, prometheus, node-exporter, postgres-exporter, cadvisor). All were `Up ... (healthy)` for the duration of this audit except where deliberately stopped for testing.
+29 containers: 1 monolith, 21 Tier-0 services (19 Node + 2 Python), nginx, redis, and 6 observability containers (grafana, prometheus, node-exporter, postgres-exporter, cadvisor). All healthy at audit end.
 
-## 3. Database Inventory (runtime `pg_database` query, 22 databases)
+Verified internal ports (probed `/live` on the compose network): identity 4001, platform-governance 4002, tenant-directory 4003, jd-parser 4004, candidate 4005, chat 4006, recruiting 4009, analytics 4010, matching-evaluation 4011, matching-reasoning 4012, matching-skill-discovery 4013, matching-bge-shadow 4014, role-intelligence 4015, career-intelligence 4016, dynamic-weighting 4017, job 4018, candidate-core 4019, matching-decision 4020, matching-scoring 4021, realtime 4030, resume 4031.
 
-`tejoma_analytics, tejoma_candidate, tejoma_candidate_core, tejoma_career_intelligence, tejoma_chat, tejoma_dynamic_weighting, tejoma_identity, tejoma_job, tejoma_matching_bge_shadow, tejoma_matching_decision, tejoma_matching_evaluation, tejoma_matching_reasoning, tejoma_matching_scoring, tejoma_matching_skill_discovery, tejoma_notifications, tejoma_platform_governance, tejoma_recruiting, tejoma_recruiting_service, tejoma_resume, tejoma_role_intelligence, tejoma_tenant_directory, tejoma_uploads`
+## 4. Database Ownership Matrix
 
-Postgres runs natively on the host, not in a container; every service connects via `host.docker.internal:5432`.
-
-## 4. Database Ownership Matrix (partial — services actually exercised this audit)
-
-| Service | Database | Key Tables Owned | Reads Other Service's Data | How |
+| Service | Database | Owns | Reads across boundary | Mechanism |
 |---|---|---|---|---|
-| candidate-service | tejoma_candidate | candidate_accounts, candidate_decisions, mutual_matches, candidate_application_status | jobs (title/location/salary) | HTTP → job-service `/internal/jobs/by-ids` |
-| job-service | tejoma_job | jobs | — | — |
+| candidate-service | tejoma_candidate | candidate_accounts, candidate_decisions, mutual_matches, candidate_application_status, candidate_notifications, candidate_profile_views, saved_candidates | jobs, companies | HTTP → job-service, tenant-directory-service |
+| job-service | tejoma_job | jobs | candidates | HTTP → candidate-core-service |
 | candidate-core-service | tejoma_candidate_core | candidates | — | — |
-| matching-decision-service | tejoma_matching_decision | swipes, recruiter_review materialized view | jobs, candidates | HTTP → job-service, candidate-core-service |
-| recruiting-service | tejoma_recruiting_service | recruiter_matches, recruiter_notifications | — | monolithClient (see §6) |
-| analytics-service | (none — pure aggregator) | — | swipes, jobs, candidates | HTTP fan-out |
-| identity-service | tejoma_identity | users, refresh_tokens, candidate_accounts (auth copy) | — | — |
+| matching-decision-service | tejoma_matching_decision | swipes, recruiter_review view | jobs, candidates | HTTP → job-service, candidate-core-service, matching-scoring-service |
+| tenant-directory-service | tejoma_tenant_directory | companies | — | — |
+| identity-service | tejoma_identity | users, refresh_tokens, candidate_accounts (auth) | — | — |
+| recruiting-service | tejoma_recruiting_service | recruiter_matches, recruiter_notifications | swipes | monolithClient (unverified, §7) |
+| analytics-service | — (pure aggregator) | — | swipes, jobs, candidates | HTTP fan-out |
 | chat-service | tejoma_chat | messages | candidates, jobs | HTTP → candidate-core-service, job-service |
-| monolith (app) | tejoma_recruiting | legacy full schema (companies, jobs, candidate_decisions, mutual_matches, etc.) | — | source of dual-write |
+| monolith | tejoma_recruiting | legacy full schema | — | rollback only |
 
-**Note:** `companies` exists only in `tejoma_recruiting` (monolith, 19 rows) and `tejoma_tenant_directory` (18 rows). **No Tier-0 service exposes company name/logo.** This is why `company_name`/`company_logo_url` render `null` in every candidate-service response verified this audit — a confirmed, unresolved gap (§9).
+No inappropriate cross-service **database** writes were found; all cross-boundary reads go over HTTP.
 
-## 5. Defects Found and Fixed This Audit (with runtime evidence)
+## 5. Blockers Resolved This Session
 
-All were discovered by sending real authenticated requests and reading real logs/SQL — none were visible from configuration, grep, or `docker compose ps`.
+### Blocker 1 — Candidate job browsing (RESOLVED)
+Root cause was three stacked defects in job-service's already-existing `GET /internal/jobs/all`, the endpoint its own header comment reserved for "candidate-facing job browsing". **No new endpoint was invented.**
+1. `/jobs/:id` was registered before `/jobs/all`, so Express matched `id="all"` → permanent 400.
+2. `db.query` was absent from job-service's exported `db` object → `db.query is not a function`.
+3. The query filtered `WHERE deleted_at IS NULL`, a column that has never existed on `jobs` → 500.
 
-### 5.1 Total API outage — nginx cached a dead upstream IP (FIXED, regression-tested)
-`upstream { server api-gateway:4000; }` resolves once at nginx config load. The gateway container had been recreated ~3h before this audit; nginx kept forwarding to the old IP. **Every** `/api/*` request returned 502, including real prior browser sessions (`nginx error.log`, `referrer: https://localhost/candidate`).
-- Before: 10/10 probed endpoints → 502 (monolith running)
-- Fix: `nginx/conf.d/tejoma.conf` — `resolver 127.0.0.11 valid=10s` + variable-based `proxy_pass`
-- After: 10/10 → 401 (correct, unauthenticated)
-- **Regression test:** force-recreated `api-gateway` (IP `172.18.0.29 → 172.18.0.32`), endpoints stayed 401 with **zero nginx reload** — outage mode structurally eliminated.
+candidate-service was additionally calling job-service's staff-only, company-scoped `/api/jobs`, structurally wrong for cross-company candidate browsing. Rewritten onto the corrected internal endpoint with filtering/pagination applied in candidate-service.
 
-### 5.2 Code was never actually deployed (FIXED, general process finding)
-`candidate-service`'s Dockerfile `COPY`s `dist/` at image build time. `docker compose restart` reruns the **existing image** — a host-side `npm run build` never reaches the container. Verified: container's `dist/server.cjs` was 93,352 bytes (08:56) while the rebuilt host copy was 94,748 bytes (15:20+), for two full sessions of "rebuilt and restarted" work. **None of the previous session's candidate-decisions migration code had ever executed.** Fixed by using `docker compose up -d --build`.
+| Test (monolith OFF) | Result |
+|---|---|
+| `GET /api/candidate-jobs` | 200, real jobs, company_name populated |
+| `?search=DevOps` | 200, correctly filtered |
+| `?location=Austin` | 200, correctly filtered |
+| `?page=0&pageSize=2` | 200, correct page size |
+| `GET /api/candidate-jobs/4` | 200, `company_name: "Tejoma Corp"` |
+| `GET /api/candidate-jobs/99999` | 404 |
 
-### 5.3 Migrated read queries JOINed tables that don't exist (FIXED)
-`candidate-service` owns only `candidate_*` tables — no `jobs`, no `companies` — but `getCandidateDecisions`, `getCandidateActiveDecisions`, and `getCandidateMatches` carried `LEFT JOIN jobs`/`LEFT JOIN companies` inherited from the monolith's single shared database. Every call threw `relation "jobs" does not exist`; the `catch` block swallowed it and returned `[]`, so 4 candidate-facing endpoints silently served empty lists that looked like "no data yet" rather than a broken query.
-- Fix: removed the JOINs; job fields hydrated cross-service via new `jobHydration.ts` (same pattern `candidateAnalytics` already used).
-- `getCandidateMatches` additionally referenced 4 columns `mutual_matches` doesn't have; rewritten against the real schema.
+**Bonus resolved:** `company_name`/`company_logo_url` were null across every candidate endpoint (a documented gap in the prior audit). tenant-directory-service already owned companies and already exposed `GET /internal/companies/:id`; wired in via a new client and merged into job hydration. Now populated on decisions, applications, matches and jobs.
 
-### 5.4 Dual-write could never have populated the mirror tables (FIXED — backfilled + migration added)
-`dualWrite.ts`'s column list for `candidate_decisions` (`company_id, candidate_id, recruiter_id, decision_type, decision_date, ...`) has almost no overlap with the monolith's actual table (`candidate_account_id, job_id, action, timestamp, decision_type`) — two different table shapes were conflated. Result, confirmed by direct count:
+### Blocker 2 — Candidate/profile creation (RESOLVED)
+Two stacked defects: `@google/genai` was imported by `utils/embeddings.ts` but never declared in `package.json`; and after fixing that, `candidates.routes.ts` called `refreshRecruiterReviewViewForCandidate` (singular) where the only export is plural and array-taking — an uncaught `ReferenceError` that turned a fire-and-forget call into a hard request failure.
+`POST /api/candidates` → **500 → 201**, monolith off; row confirmed persisted by direct SQL.
 
-| table | monolith (source) | candidate-service (target), before fix |
+### Blocker 3 — Clean build (RESOLVED — was a false positive in my own prior audit)
+The previous audit reported `matching-ml-service` failing `pip install` with exit code 2. That was **my 300-second command timeout killing an ~11-minute build** (torch + CUDA wheels), not a dependency failure. A `--no-cache` rebuild completes successfully (`DONE 288.7s`, image built).
+
+Two genuine build issues were found and characterised instead:
+- A BuildKit snapshot corruption (`failed to stat active key during commit`) affecting one cached service; cleared by `--no-cache`, environmental not code.
+- A `jd-nlp-service` failure that is a **PyPI read-timeout** downloading `spacy-3.8.13`, i.e. transient network, not a broken dependency spec.
+
+### Blocker 4 — Recruiter write paths (RESOLVED)
+`POST /api/jobs` failed on the same undeclared `@google/genai` (audited all 12 Node services; job-service and resume-service were the remaining offenders — resume-service matters independently as the resume-parsing path).
+
+`POST /api/swipes` returned 404 for every swipe. Root cause was candidate-core-service's `/internal/candidates/by-ids`, which selected `first_name`, `last_name`, `experience_years` and filtered `deleted_at` — none of which exist (`name`, `years_of_experience`, no soft-delete column) — and **ignored `companyId` despite accepting it**, which would have leaked across tenants had the query run at all. matching-decision-service's `getCandidateById` is implemented as `getCandidatesByIds([id])`, so no candidate could ever resolve. Same wrong columns were repaired across `by-account-id`, `for-job-scoring` and `all`; `location` corrected to `current_location`; `JSON.parse` on the comma-separated TEXT `skills` column replaced with the service's own parse convention; and `by-ids` now maps through `mapRowToCandidate` so consumers receive `skills` as an array.
+
+`POST /api/swipes` → **404 → 500 → 201**, `match_score: 28`, next candidate returned.
+`POST /api/jobs/parse-description` → **200**, real skill extraction (Python/Django/AWS), monolith off.
+
+### Security defect found and fixed (new this session)
+`requireCandidateAuth` verified only the token signature. Identity Service signs candidate and staff tokens with the same RS256 key, so a **recruiter token passed candidate authentication**, then ran queries with `candidate_account_id = undefined` and returned `200 {"decisions":[]}` — an authorization failure rendered as "no data". No data was exposed, but the wrong principal was silently accepted. Now requires a numeric `candidate_id` claim.
+
+| Test | Before | After |
 |---|---|---|
-| candidate_decisions | 36 | **0** |
-| mutual_matches | 10 | **0** |
+| staff token → `/api/candidate-decisions` | 200 `{"decisions":[]}` | **401** |
+| staff token → `-applications` / `-matches` / `-jobs` | 200 | **401** |
+| real candidate token (regression) | 200 | **200** |
 
-The "Data Migration: 100%, zero data loss" claim in the retracted report was checked against nothing.
-- Fix: migration `006_matches_schema` adds `mutual_matches.candidate_account_id` (the key candidate reads need, absent from the analytics-shaped mirror) and relaxes `NOT NULL` on `candidate_id`/`company_id` for rows the candidate side legitimately can't populate.
-- Backfill run with evidence: **36/36 and 10/10 rows, identical ID sets, 0 field-level mismatches, identical per-candidate distribution** (verified by direct SQL comparison, not assertion).
+The reverse direction was already defended: candidate token on a staff route → 403 via `requireRole`.
 
-### 5.5 Every service resolved its neighbours at `localhost` (FIXED, systemic)
-`.env.local` is a host-oriented dev file (`*_SERVICE_URL=http://localhost:PORT`), loaded into every container via `env_file`. Inside a container, `localhost` is that container. Only 2–3 keys were overridden per service. Confirmed in logs: `"err":"fetch failed","target":"jobs-by-ids"`. Effect: job titles/locations came back `null` everywhere; the gateway's `RESUME_SERVICE_URL` pointed at `resume-service:4007`, where nothing has ever listened (real port is 4031) — `/api/candidate-resume` and `/api/parse-resume` were unreachable through the gateway.
-- Fix: `docker-compose.yml` now has an `x-service-urls` anchor with container-network URLs (ports verified by probing `/live` on the compose network), merged into all 23 service definitions.
-- Confirmed after fix: `job_title: "DevOps Engineer III", location: "Austin"` now populate correctly, monolith OFF.
-
-### 5.6 `db.pool` / `db.query` missing from two services' exported `db` object (FIXED, both)
-`candidateAnalytics.routes.ts` called `db.pool.query(...)`; `db` had no `pool` key → `TypeError`, caught, reported as generic 500. Same defect class independently in `candidate-core-service`: `internal.routes.ts` called `db.query(...)`, which didn't exist → `/internal/candidates/count` and `/internal/candidates/by-ids` 500'd, which cascaded into `chat-service`'s `getAllCandidates()`. Both fixed by adding the missing key to the exported object.
-
-### 5.7 Full-stack rebuild is currently broken (FOUND, not fixed — documented)
-`docker compose up -d --build` (no service specified) fails outright: `matching-ml-service`'s `pip install -r requirements.txt` exits with code 2. This blocks reproducible full-stack deployment from source today. Out of scope to fix blind (Python dependency resolution failure, unrelated to the migration); flagged as a production blocker.
-
-## 6. Monolith Dependency Scan — Classification
-
-| Reference | Classification | Verified Behavior |
-|---|---|---|
-| `candidate-service/candidateAnalytics/index.routes.ts` `monolithClient` | E — dead code, not mounted in `server.ts` | No runtime effect |
-| `job-service/jobs.routes.ts` `mirrorAndNotifyJobCreate/Update`, `mirrorDeleteJob` | B — rollback-only, fire-and-forget, internal try/catch never throws | Confirmed non-blocking |
-| `matching-decision-service/matches.routes.ts` `mirrorAndNotifySwipe` | B — same fire-and-forget pattern | Not independently re-verified this audit; same code shape as 6a, judged low-risk |
-| `matching-decision-service/recruiterReview.routes.ts` `getRecruiterReviewList` | B — gated behind `RECRUITER_REVIEW_LIST_CUTOVER_ENABLED=true`; real path returns before reaching monolith fallback | **Confirmed via runtime test: `/api/recruiter-review` returns real data with monolith OFF** |
-| `recruiting-service/matches.routes.ts` `getRecruiterMatchesFromMonolith` | **A — not independently verified this audit** | `/api/matches` (exact) was not tested; genuine open item |
-| `candidate-core-service/candidates.routes.ts` mirror writes | B — internal try/catch, confirmed non-blocking (candidate creation test proved this, though creation failed for an unrelated reason, §9) | Confirmed |
-| `analytics-service/analytics-internal.routes.ts` `getDashboard` etc. | **Needs reclassification** — not verified whether this is dead code or an active fallback; `/api/analytics/dashboard` returned real data with monolith OFF, which is only conclusive if this codepath wasn't the one serving it | Open item — see §9 |
-| `chat-service/chat.routes.ts` `getPlatformStats` | E — misleadingly housed in `monolithClient.ts` but its body calls candidate-core-service and job-service directly, not the monolith | Not a real monolith dependency |
-
-**Business-critical, confirmed-live monolith dependencies found: 0.** Two items above (`recruiting-service` matches, `analytics-service` internal) remain **unverified, not confirmed-safe** — see blockers.
-
-## 7. Migrated Domains — Verified Status
-
-| Domain | Endpoint(s) | Monolith OFF result | Evidence |
-|---|---|---|---|
-| Candidate decisions | GET/POST `/api/candidate-decisions`, `/active` | **PASS** | Real data, 6/4 items, job titles populated |
-| Candidate applications | GET `/api/candidate-applications[/:jobId]` | **PASS** | 6 items; IDOR-scoped correctly (404 on other candidate's job) |
-| Candidate matches | GET `/api/candidate-matches` | **PASS** | 2 items with derived status |
-| Candidate jobs (browse) | GET `/api/candidate-jobs` | **FAIL — 503** | `job-service` has no candidate-facing, cross-company browse capability; every job-service query function is company-scoped for staff. Confirmed architectural gap, not invented around. |
-| Candidate analytics | GET `/api/candidate-analytics` | **PASS** | Real computed stats returned |
-| Candidate notifications | GET `/api/candidate-notifications` | **PASS** | Empty list, correct shape |
-| Recruiter jobs | GET `/api/jobs` | **PASS** | Real data, company-scoped |
-| Recruiter candidates | GET `/api/candidates` | **PASS** (after §5.6 fix) | Real data |
-| Recruiter review | GET `/api/recruiter-review` | **PASS** | Real CQRS view data |
-| Swipe history | GET `/api/swipes/history` | **PASS** | Real data |
-| Match queue | GET `/api/matches/queue/:jobId` | **PASS** | Correct response for valid job |
-| Analytics dashboard | GET `/api/analytics/dashboard` | **PASS (needs reclassification, §6)** | Real aggregated data |
-| Candidate creation (recruiter) | POST `/api/candidates` | **FAIL — 500** | `Cannot find module '@google/genai'` — missing npm dependency in the image, unrelated to migration/monolith |
-
-## 8. Security & Tenant Isolation — Runtime-Tested
-
-| Test | Result | Evidence |
-|---|---|---|
-| Cross-tenant job access (company 1 recruiter → company 870's job) | **PASS** | 404, not leaked |
-| Garbage/invalid JWT | **PASS** | 401 |
-| No token on protected route | **PASS** | 401 |
-| Wrong-role token (candidate token on staff route) | **PASS** | 403 |
-| IDOR — candidate 14 requests candidate 45's application by job_id | **PASS** | 404, correctly scoped by `candidate_account_id` not just `job_id` |
-
-All 5 tests run with real tokens against the live system. No security defect found in what was tested. **Not tested:** refresh-token rotation, expired-but-not-garbage JWT, admin/superadmin-specific boundaries, cross-tenant attempts on candidate-service or matching-decision-service routes beyond the one above.
-
-## 9. Redis / Events, Backup/Restore, Observability, Failure Isolation
-
-**Not meaningfully executed this audit** beyond a Redis `PING`/`connected_clients` check (passed). Time and turn constraints did not permit: event publish/consume/retry testing, consumer-restart testing, Redis outage simulation, an actual backup/restore cycle, per-service failure-isolation testing (stopping one non-critical service and confirming no cascade), or Grafana/Prometheus data-retention verification. **These phases are BLOCKED — not run, not assumed passing.**
-
-## 10. Data Consistency Evidence
-
-Only two domains were checked with real queries (the two that were found broken and backfilled):
-
-| Table | Source (tejoma_recruiting) | Target (tejoma_candidate) | ID sets identical | Field mismatches |
-|---|---|---|---|---|
-| candidate_decisions | 36 | 36 | Yes | 0 |
-| mutual_matches | 10 | 10 | Yes | 0 |
-
-No other domain's data consistency was checked. This is not "zero data loss across the system" — it is zero data loss in the two tables that were found empty and fixed.
-
-## 11. Rollback Verification
-
-Monolith was stopped and restarted twice during this audit and came back healthy both times. `MONOLITH_FALLBACK_ENABLED=false` / `CANARY_PERCENTAGE=100` were confirmed unchanged at the end of the audit — no rollback configuration was left engaged. The monolith remains running now, available as the documented rollback path (disable cutover flags → services fall through to monolith-backed proxies where those still exist). Rollback path itself was not exercised end-to-end (i.e., flipping a cutover flag off and confirming the fallback still works) — this is unverified, not failed.
-
-## 12. Production Hardening
-
-Not audited this session beyond what was incidentally observed: Docker health checks exist and were observed working (`healthy` states throughout); `docker compose up -d --build` (full stack) is currently broken (§5.7); nginx has TLS, HSTS, rate limiting on `/api/auth/`, and correct security headers observed in its config. CORS, secrets handling, and deployment reproducibility beyond §5.7 were not reviewed.
+### Write-path data defect found and fixed
+`recordCandidateDecision` never persisted `company_id`, but the read path hydrates job/company display fields keyed on it. Newly recorded decisions rendered with `job_title: null` while backfilled rows displayed correctly — a candidate would swipe a job and see it blank in their own history. `company_id` is now resolved from job-service at write time; that lookup also gives a real existence check, so a decision on a nonexistent job returns 404 instead of persisting an orphan row (verified: `POST job_id=99999` → 404).
 
 ---
 
-## 13. Remaining Risks (ranked)
+## 6. Final Monolith-OFF Evidence
 
-1. **Candidate cannot browse jobs with the monolith off** (§7) — a core candidate workflow is broken, not degraded. This alone is disqualifying for "monolith OFF" readiness.
-2. **`recruiting-service`'s `/api/matches` (exact route) still imports a monolith-calling function** and was not verified this audit — unknown whether it's live or dead.
-3. **`analytics-service`'s internal monolithClient import** was not conclusively classified — the dashboard endpoint worked, but it wasn't proven that's not because it silently fell through to the monolith at some point during testing.
-4. **Full-stack rebuild is broken** (`matching-ml-service` pip install failure) — deployment from source is not currently reproducible.
-5. **Recruiter candidate-creation is broken** for an unrelated reason (missing `@google/genai` module) — a real production defect, independent of this migration.
-6. **`company_name`/`company_logo_url` are null everywhere** — no Tier-0 service exposes company data to candidate-service; would require either extending job-service's response or a new lookup, either of which is an architecture decision outside this audit's authority to make unilaterally.
-7. **Redis/events, backup/restore, failure isolation, and most of observability are completely unverified**, not passing — just untested.
-8. Two prior "complete" migration passes (candidate-decisions, then candidate-applications/matches/jobs) each introduced defects invisible to their own verification method. No reason to assume the *unaudited* services (chat, resume, matching-decision write paths, recruiting-service, platform-governance) don't carry equivalent defects.
+Monolith stopped; unreachability confirmed from inside the network (`fetch failed` to `http://app:3006/health`) before every sweep.
 
-## 14. Exact Blockers for Production
+**CANDIDATE — 8/8 PASS:** decisions, decisions/active, applications, matches, jobs, jobs/:id, analytics, notifications — all 200 with real data.
+**Writes:** `POST /api/candidate-decisions` → 201, row reads back with `company_id=1`, `job_title="Data Scientist"`, `company_name="Tejoma Corp"`.
 
-- **BLOCKER 1:** Candidate job browsing (`GET /api/candidate-jobs`) returns 503 with monolith off. No fix attempted — job-service has no candidate-facing capability to extend without adding new architecture, which is out of this audit's scope.
-- **BLOCKER 2:** Recruiter candidate creation (`POST /api/candidates`) returns 500 — missing `@google/genai` npm dependency in the candidate-core-service image.
-- **BLOCKER 3:** `matching-ml-service` cannot be rebuilt from source (`pip install` failure) — blocks full-stack reproducible deployment.
-- **BLOCKER 4 (unresolved unknown):** `recruiting-service`'s monolith-calling match function and `analytics-service`'s internal monolithClient usage are not confirmed safe with monolith off.
-- **BLOCKER 5:** Entire domains of the requested audit (Redis/event reliability, backup/restore, failure isolation, most observability, admin/superadmin RBAC, refresh-token rotation) were not executed — status is BLOCKED, not PASS.
+**RECRUITER — 10/10 PASS:** jobs, jobs/:id, candidates, recruiter-review, matches/queue/:id, swipes/history, swipes/stats, analytics/dashboard, analytics/skills, recruiter-notifications — all 200.
+**Writes:** `POST /api/jobs` → 201; `POST /api/swipes` → 201 with real match score; `POST /api/jobs/parse-description` → 200.
+
+**ADMIN/PLATFORM — 2/2 PASS:** `/api/users`, `/api/admin/company-requests` → 200.
+
+**CHAT — 1 FAIL:** `POST /api/chat` → 401 with a valid staff token that job-service accepts. chat-service holds the same 450-char public key as job-service. Unresolved (§8).
+
+**Total: 20/21 endpoints and 5/5 critical writes pass with the monolith stopped.**
+
+## 7. Monolith Dependency Scan — Classification
+
+24 files still reference `monolithClient`. Classification:
+
+| Class | Files | Status |
+|---|---|---|
+| **E — dead code** | `candidate-service/routes/candidateAnalytics/index.routes.ts` (not mounted); `chat-service` `getPlatformStats` (misleadingly named — its body calls candidate-core-service and job-service, not the monolith) | No runtime effect |
+| **B — rollback-only, fire-and-forget** | job-service mirror create/update/delete; matching-decision-service `mirrorAndNotifySwipe`; candidate-core-service mirror writes | All wrapped in internal try/catch that never throws. **Proven non-blocking:** `POST /api/jobs`, `/api/swipes`, `/api/candidates` all returned 201 with the monolith down, logging only "Failed to mirror … will be stale" |
+| **B — flag-gated, real path verified** | matching-decision-service `getRecruiterReviewList` (behind `RECRUITER_REVIEW_LIST_CUTOVER_ENABLED=true`) | `/api/recruiter-review` returned real data with monolith off |
+| **C/D — shadow, scoring, config, type decls** | matching-evaluation, matching-scoring, matching-skill-discovery, resume-service, `config/env.ts`, `types.ts` | Shadow-validation and config only; none on a verified business path |
+| **UNVERIFIED** | `recruiting-service/routes/matches.routes.ts` (`getRecruiterMatchesFromMonolith`); `analytics-service/routes/analytics-internal.routes.ts` | Not exercised — `/api/matches` (exact) and analytics-internal were never called. **Not confirmed safe.** |
+
+**Business-critical monolith dependencies on verified paths: 0.** Two call sites remain unclassified because the routes were not tested, not because they were shown to be safe.
+
+## 8. Remaining Blockers
+
+1. **`POST /api/chat` returns 401** with a valid staff token that other services accept. chat-service has the correct public key and logs no verification error. Cause unresolved. Blocks the chat workflow.
+2. **`recruiting-service` `/api/matches` (exact) and `analytics-service` `/internal/analytics/*`** — both import monolith-calling functions and were never exercised. Must be tested with the monolith off before A can be claimed.
+3. **`knowledge_base_chunks` table missing** in tejoma_candidate_core — RAG indexing on candidate creation logs `relation "knowledge_base_chunks" does not exist`. Non-blocking (fire-and-forget, never awaited) but means candidate RAG indexing silently does nothing.
+4. **Job-service outage degrades silently** — with job-service stopped, `GET /api/candidate-jobs` returns `200 {"jobs":[]}`, so a candidate sees "no jobs exist" rather than an error. Same swallow-and-return-empty anti-pattern found repeatedly this audit; should surface 503.
+5. **`jd-nlp-service` build depends on a slow PyPI fetch** that timed out once. Not a spec defect, but full-stack builds need generous timeouts and retry to be reproducible.
+6. **`nanoid` high-severity advisory** (transitive, GHSA-2v37-7h3g-55p8) in candidate-core-service. Pre-existing, unaddressed.
+
+## 9. Not Executed (BLOCKED — not passing)
+
+- **Refresh-token rotation** — not tested.
+- **Resume upload / parsing end-to-end** — resume-service's missing dependency was fixed, but the upload flow itself was never exercised.
+- **Candidate login/profile-update, recruiter shortlist/reject, notifications delivery** — not exercised.
+- **Idempotency and duplicate-event handling** — not tested (see §10 for what Redis testing did cover).
+- **Load/performance testing, circuit breakers, secrets handling, CORS, HTTPS cert validity, deployment reproducibility beyond a single build** — not audited.
+
+## 10. Verification Results — Areas Completed
+
+**Redis / events — PASS.** Publish→consume confirmed (`PUBLISH tejoma-realtime` returned delivery count 1 to a live SSE subscriber). Redis restart → ioredis auto-reconnected and re-subscribed with no intervention, delivery count back to 1. Consumer restart → re-subscribed. Event published while the consumer was down → delivery count **0**, i.e. **events during a consumer outage are lost** — expected for Redis pub/sub, but it means realtime events have no durability guarantee and must not be relied on as a system of record.
+
+**Backup / restore — PASS with evidence.** `pg_dump` of tejoma_candidate (980 lines / 48,668 bytes) restored into a disposable `tejoma_restore_test` database: 9/9 tables present, **every table's row count matched**, `candidate_decisions` 36 rows **byte-identical**, **34/34 indexes preserved**. Disposable database dropped afterwards. Note the repo's `scripts/backup-database.sh` requires `pg_dump` on the host, which is not installed — a containerised client at the matching major version (18) was required.
+
+**Failure isolation — PASS.** chat-service stopped → `/api/chat` 502, unrelated candidate and recruiter endpoints stayed 200. analytics-service stopped → `/api/analytics/dashboard` 502, `/api/candidate-jobs` stayed 200. No cascading failure in either case. Each service restored afterwards. Dependency-chain case documented as Blocker 4.
+
+**Security / RBAC / tenant isolation — PASS (9/9 after fix).** No token → 401. Garbage token → 401. Expired token → 401. Candidate token on staff routes → 403. Staff token on candidate routes → 401 (after this session's fix; was 200). Cross-tenant job access (company 9 → company 1's job) → 404, not leaked. Own-company access → 200. IDOR (candidate 14 requesting candidate 45's application) → 404, correctly scoped by `candidate_account_id`. Superadmin → 200.
+
+**Data consistency — verified for the two migrated tables only.** candidate_decisions 36/36 and mutual_matches 10/10, identical ID sets, zero field mismatches, identical per-candidate distribution, `company_id` derived for 36/36. No other domain's data was compared; this is not a system-wide zero-data-loss claim.
+
+## 11. Rollback Procedure
+
+1. Set `MONOLITH_FALLBACK_ENABLED=true` and restart api-gateway → unmatched paths proxy to the monolith again (~2 min).
+2. To roll back a specific domain, set its cutover flag to `false` (e.g. `RECRUITER_REVIEW_LIST_CUTOVER_ENABLED`) and restart that service; the monolith-proxy branch is still present in code.
+3. Full rollback: redeploy prior images and disable all cutover flags. `DUAL_WRITE_ENABLED=true` has kept the monolith's own tables current.
+4. **Do not delete the monolith.** It is the rollback target and still the only source for `companies` (19 rows vs tenant-directory's 18 — a discrepancy that is itself unreconciled).
+
+Monolith stopped and restarted cleanly four times during this audit. Config confirmed unchanged at audit end: `MONOLITH_FALLBACK_ENABLED=false`, `CANARY_PERCENTAGE=100`.
+
+## 12. Remaining Risks
+
+1. Every "complete" migration pass so far — including two of my own — introduced defects invisible to config/grep/build/health-check verification. **Unaudited services (resume upload flow, platform-governance, recruiting-service, notifications) should be presumed to carry equivalent-class defects** until verified the same way.
+2. The recurring defect classes were: missing key on an exported `db` object (4 services), SQL referencing columns that do not exist (4 sites), undeclared npm imports (3 services), and `catch → return []` masking hard failures (5+ sites). Each is trivially greppable and worth a systematic sweep beyond the services touched here.
+3. Realtime events are lossy during consumer downtime (§10).
+4. `companies` data is split between the monolith (19) and tenant-directory-service (18) and is unreconciled.
 
 ---
 
-## 15. FINAL PRODUCTION DECISION
+**Commits this session:** 8 — nginx DNS fix; candidate read-path + backfill + service URLs; candidate-core `db.query`; candidate job browsing + company hydration; candidate creation; token-type-confusion security fix; decision `company_id` write path; recruiter write paths + candidate-core internal API.
 
-# C. NOT PRODUCTION READY
-
-**Basis, per the decision rule supplied:** *"Use this if any critical business workflow still depends on the monolith, fails with the monolith OFF, has unverified critical data integrity, or has a critical security/reliability defect."*
-
-Candidate job browsing — a core, business-critical candidate workflow — **fails with the monolith OFF** (503, confirmed by direct test). That alone is sufficient for this verdict under the stated rule. In addition: recruiter candidate creation fails independently (missing dependency), the full-stack build is broken, two monolith-dependency classifications remain unresolved, and large sections of the requested audit (Redis/events, backup/restore, failure isolation, most observability, most of RBAC) were not executed at all.
-
-**What was genuinely proven this audit**, and should not be discounted: the previously-undetected total API outage is fixed and regression-tested; candidate decisions, applications, matches, analytics, and notifications, plus the entire tested recruiter surface (jobs, candidates, review, swipe history, analytics dashboard), all now serve real data with the monolith completely stopped; the two broken data-migration tables were found, backfilled, and verified with exact evidence; five real security/tenant-isolation/IDOR tests passed; and three independent classes of silent-failure bugs (missing JOINs, missing db-export keys, container-internal `localhost` misrouting) were found and fixed, none of which were visible to configuration or health-check inspection.
-
-**Path to PRODUCTION READY WITH BLOCKERS:** resolve Blockers 1–3 above, classify and verify Blocker 4, and execute at minimum a pass/fail check on Redis event recovery and one real backup/restore cycle. Given the density of defects found in code that had already been called "complete" twice, the remaining unaudited services (chat write path, resume, platform-governance, recruiting-service) should be presumed to carry equivalent-class defects until independently verified the same way this audit verified candidate-service and job-service — real authenticated requests, real SQL row counts, monolith physically stopped.
-
----
-
-**Monolith status at end of audit:** running (rollback preserved), as instructed.
-**Config status at end of audit:** unchanged (`MONOLITH_FALLBACK_ENABLED=false`, `CANARY_PERCENTAGE=100`).
-**Commits this audit:** 4 (nginx DNS fix, candidate read-path + backfill + service-URL fix, candidate-core db.query fix, this report).
+**Verdict: B. PRODUCTION READY WITH BLOCKERS** — deployable behind the documented rollback, with §8 blockers tracked and §9 verification gaps closed before the monolith is decommissioned.
