@@ -251,6 +251,10 @@ export const db = {
   createJob,
   updateJob,
   deleteJob,
+  // internal.routes.ts's GET /jobs/all calls db.query(...) directly for its unscoped read.
+  // query was never on this object - same defect class as candidate-service's missing db.pool
+  // and candidate-core-service's missing db.query (both fixed earlier this audit).
+  query: (text: string, params?: unknown[]) => pool.query(text, params),
 };
 
 export { pool };

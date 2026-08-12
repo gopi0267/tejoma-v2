@@ -1,6 +1,14 @@
 /**
- * HTTP client for job-service's /internal/jobs/by-ids endpoint - for Item 4 analytics computation.
- * Fetches job metadata needed to populate analytics views and compute recommendations.
+ * HTTP client for job-service's /internal/jobs/* endpoints.
+ * /internal/jobs/by-ids - Item 4 analytics computation, fetches job metadata to populate
+ * analytics views and compute recommendations.
+ * /internal/jobs/all - the one job-service endpoint with no companyId scope, added by job-service
+ * itself "for whichever future caller (e.g. candidate-facing job browsing, which only ever reads)
+ * needs it" (job-service/src/routes/internal.routes.ts's own header comment). Candidate job
+ * browsing is cross-company by nature - every other job-service endpoint (`/api/jobs`,
+ * `/internal/jobs`, `/internal/jobs/:id`) requires a companyId because it serves the recruiter
+ * side (their own company's postings only) - so this is the correct, already-existing endpoint to
+ * reuse rather than adding a new one.
  */
 
 import { JOB_SERVICE_URL } from '../config/env.js';
@@ -41,6 +49,34 @@ export async function getJobsByIds(ids: number[], companyId: number): Promise<Jo
   } catch (error) {
     upstreamProxyCount.inc({ upstream: 'job-service', target, outcome: 'error' });
     logger.warn({ err: (error as Error).message, target }, 'Failed to fetch jobs by ids from job-service');
+    return [];
+  } finally {
+    const durationSeconds = Number(process.hrtime.bigint() - start) / 1e9;
+    upstreamProxyDuration.observe({ upstream: 'job-service', target }, durationSeconds);
+  }
+}
+
+export async function getAllOpenJobs(): Promise<Job[]> {
+  const target = 'jobs-all';
+  const start = process.hrtime.bigint();
+  try {
+    const res = await fetch(`${JOB_SERVICE_URL}/internal/jobs/all`, {
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    const body: any = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      upstreamProxyCount.inc({ upstream: 'job-service', target, outcome: 'error' });
+      logger.warn({ status: res.status }, 'job-service returned non-ok status for jobs/all');
+      return [];
+    }
+    upstreamProxyCount.inc({ upstream: 'job-service', target, outcome: 'success' });
+    const jobs = (body.jobs ?? []) as Job[];
+    // /internal/jobs/all is a raw dump (no status filter, unlike getJobs' recruiter-side "open
+    // only" behavior) - filtered here so candidate browsing only ever sees open postings.
+    return jobs.filter((j) => j.status === 'open');
+  } catch (error) {
+    upstreamProxyCount.inc({ upstream: 'job-service', target, outcome: 'error' });
+    logger.warn({ err: (error as Error).message, target }, 'Failed to fetch all jobs from job-service');
     return [];
   } finally {
     const durationSeconds = Number(process.hrtime.bigint() - start) / 1e9;

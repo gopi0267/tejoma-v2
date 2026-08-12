@@ -48,6 +48,10 @@ export const MATCHING_SCORING_SERVICE_URL = process.env.MATCHING_SCORING_SERVICE
 export const CANDIDATE_CORE_SERVICE_URL = process.env.CANDIDATE_CORE_SERVICE_URL || '';
 export const MATCHING_DECISION_SERVICE_URL = process.env.MATCHING_DECISION_SERVICE_URL || '';
 export const JOB_SERVICE_URL = process.env.JOB_SERVICE_URL || '';
+// Used by candidateJobs.routes.ts to hydrate company name/logo onto job listings - companies
+// live in tenant-directory-service (an existing Tier 0 service), never in this service's own
+// database or job-service's. See candidateJobs.routes.ts's header comment.
+export const TENANT_DIRECTORY_SERVICE_URL = process.env.TENANT_DIRECTORY_SERVICE_URL || '';
 
 // Phase 4 Feature Flags
 export const SHORTLIST_SEARCH_CUTOVER_ENABLED = process.env.SHORTLIST_SEARCH_CUTOVER_ENABLED === 'true';

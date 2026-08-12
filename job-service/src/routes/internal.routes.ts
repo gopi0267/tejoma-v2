@@ -31,26 +31,27 @@ router.get('/jobs/by-ids', async (req, res) => {
   res.json({ jobs });
 });
 
-router.get('/jobs/:id', async (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  const companyId = Number(req.query.companyId);
-  if (!Number.isFinite(id) || !Number.isFinite(companyId)) {
-    return res.status(400).json({ error: 'a valid id and companyId are required' });
-  }
-  const job = await db.getJobById(id, companyId);
-  if (!job) return res.status(404).json({ error: 'Job not found' });
-  res.json({ job });
-});
-
+// Registered BEFORE the '/jobs/:id' param route below, deliberately - Express matches routes in
+// registration order, and a param route matches ANY literal segment including "all", so with the
+// opposite ordering a request to /jobs/all was being swallowed by /jobs/:id (id="all", fails
+// Number.isFinite, always 400 "a valid id and companyId are required"). Same ordering-based
+// collision this file's own by-ids route above already avoids by being listed first. Confirmed
+// live: this bug made /internal/jobs/all completely unreachable, which is why
+// candidate-service's job-browsing endpoints (added to use exactly this route) got nothing back.
 router.get('/jobs/all', async (_req, res) => {
   try {
+    // jobs has no deleted_at column (verified against the live schema - this table has no
+    // soft-delete column at all) and getJobs' own "open only" convention above filters on
+    // status = 'open', not a deleted_at check - matched here for consistency. The original
+    // `WHERE deleted_at IS NULL` referenced a column that has never existed on this table, so
+    // every call to this endpoint raised 'column "deleted_at" does not exist' (500).
     const result = await db.query(`
       SELECT id, company_id, title, description, location, required_skills, experience_years, salary_min, salary_max, status
       FROM jobs
-      WHERE deleted_at IS NULL
+      WHERE status = 'open'
       ORDER BY created_at DESC
     `);
-    const jobs = result.rows.map((row) => ({
+    const jobs = result.rows.map((row: any) => ({
       id: row.id,
       company_id: row.company_id,
       title: row.title,
@@ -66,6 +67,17 @@ router.get('/jobs/all', async (_req, res) => {
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
+});
+
+router.get('/jobs/:id', async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const companyId = Number(req.query.companyId);
+  if (!Number.isFinite(id) || !Number.isFinite(companyId)) {
+    return res.status(400).json({ error: 'a valid id and companyId are required' });
+  }
+  const job = await db.getJobById(id, companyId);
+  if (!job) return res.status(404).json({ error: 'Job not found' });
+  res.json({ job });
 });
 
 export default router;
