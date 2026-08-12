@@ -1,11 +1,13 @@
 /**
  * Auth verification for Resume Service - handles both staff and candidate auth.
- * Staff auth uses RS256 tokens from Identity Service.
- * Candidate auth still uses HS256 (legacy monolith tokens).
+ * Both verify RS256 tokens issued by Identity Service using its public key.
+ *
+ * The candidate path previously verified against the legacy symmetric JWT_SECRET, which no longer
+ * matches anything Identity Service issues - see requireCandidateAuth below.
  */
 import jwt from 'jsonwebtoken';
 import type { Request, Response, NextFunction } from 'express';
-import { JWT_SECRET, IDENTITY_JWT_PUBLIC_KEY } from '../config/env.js';
+import { IDENTITY_JWT_PUBLIC_KEY } from '../config/env.js';
 
 // ==================== STAFF AUTH ====================
 
@@ -96,7 +98,24 @@ export function requireCandidateAuth(req: Request, res: Response, next: NextFunc
     return res.status(401).json({ error: 'Authentication required' });
   }
   try {
-    req.candidate = jwt.verify(token, JWT_SECRET) as CandidateTokenPayload;
+    // RS256 with Identity Service's public key - NOT the legacy symmetric JWT_SECRET.
+    // Candidate auth completed its cutover to Identity Service, which now issues RS256 tokens;
+    // requireAuth above (line ~57) was migrated to IDENTITY_JWT_PUBLIC_KEY at the time but this
+    // candidate path was missed, so it kept verifying against the old shared secret and rejected
+    // every real candidate token. Effect: all three candidate resume endpoints
+    // (POST /api/candidate-resume/parse, POST+GET /api/candidate-resume/file) returned 401,
+    // i.e. candidate resume upload/parse/download was entirely unusable.
+    const payload = jwt.verify(token, IDENTITY_JWT_PUBLIC_KEY, { algorithms: ['RS256'] }) as CandidateTokenPayload;
+
+    // A valid signature alone does not prove this is a CANDIDATE token - Identity Service signs
+    // staff tokens with the same key. Without this check a recruiter token would authenticate as
+    // a candidate and operate with candidate_id undefined. Same guard applied to
+    // candidate-service's requireCandidateAuth earlier in this audit.
+    if (typeof payload?.candidate_id !== 'number') {
+      return res.status(401).json({ error: 'Invalid or expired session' });
+    }
+
+    req.candidate = payload;
     next();
   } catch {
     return res.status(401).json({ error: 'Invalid or expired session' });
