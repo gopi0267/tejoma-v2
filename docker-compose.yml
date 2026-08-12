@@ -353,6 +353,11 @@ services:
       - .env.local
     environment:
       <<: *service-urls
+      # resume-service owns tejoma_resume. Without this it inherited DB_NAME from .env.local,
+      # which sets tejoma_recruiting for the (now decommissioned) monolith - so every
+      # candidate_resume_files read/write targeted the monolith's database, where the table does
+      # not exist. That is why candidate resume upload returned 500.
+      DB_NAME: tejoma_resume
       NODE_ENV: production
       DB_HOST: host.docker.internal
       REDIS_URL: redis://redis:6379

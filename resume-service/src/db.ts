@@ -284,7 +284,10 @@ export async function getCandidateResumeFile(candidateId: number): Promise<Candi
   }
 }
 
-export async function upsertCandidateResumeFile(candidateId: number, companyId: number, data: {
+// company_id dropped from the signature: a candidate token carries no company_id (see
+// auth.middleware.ts's CandidateTokenPayload), so the caller never had a real value to pass.
+// The column stays on the table, nullable, for the recruiter-side upload path which does know one.
+export async function upsertCandidateResumeFile(candidateId: number, data: {
   resume_file_path?: string | null;
   resume_original_filename?: string | null;
   resume_file_uploaded_at?: string | null;
@@ -292,15 +295,18 @@ export async function upsertCandidateResumeFile(candidateId: number, companyId: 
   try {
     const result = await pool.query(
       `INSERT INTO resume_service.candidate_resume_files
-       (candidate_id, company_id, resume_file_path, resume_original_filename, resume_file_uploaded_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)
+       (candidate_id, resume_file_path, resume_original_filename, resume_file_uploaded_at, updated_at)
+       VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
+       -- Existing values are qualified with the table name. Unqualified, Postgres rejects them
+       -- inside ON CONFLICT DO UPDATE as "column reference ... is ambiguous", since the name could
+       -- resolve to either the target row or the proposed EXCLUDED row.
        ON CONFLICT (candidate_id) DO UPDATE SET
-         resume_file_path = COALESCE($3, resume_file_path),
-         resume_original_filename = COALESCE($4, resume_original_filename),
-         resume_file_uploaded_at = COALESCE($5, resume_file_uploaded_at),
+         resume_file_path = COALESCE($2, candidate_resume_files.resume_file_path),
+         resume_original_filename = COALESCE($3, candidate_resume_files.resume_original_filename),
+         resume_file_uploaded_at = COALESCE($4, candidate_resume_files.resume_file_uploaded_at),
          updated_at = CURRENT_TIMESTAMP
        RETURNING *`,
-      [candidateId, companyId, data.resume_file_path, data.resume_original_filename, data.resume_file_uploaded_at]
+      [candidateId, data.resume_file_path, data.resume_original_filename, data.resume_file_uploaded_at]
     );
     return result.rows[0] || null;
   } catch (error) {

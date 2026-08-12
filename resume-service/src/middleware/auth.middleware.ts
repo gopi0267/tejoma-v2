@@ -19,9 +19,13 @@ export interface AccessTokenPayload {
   role: string;
 }
 
+// Mirrors identity-service's CandidateTokenPayload EXACTLY (utils/tokens.ts). It previously
+// declared company_id, which the issuer has never put in a candidate token - candidates are not
+// company-scoped in this architecture (candidate_accounts is global; candidate-search reads it
+// with no company filter). req.candidate.company_id was therefore always undefined, and any code
+// trusting it silently wrote NULL. candidate-service's copy of this type is already correct.
 export interface CandidateTokenPayload {
   candidate_id: number;
-  company_id: number;
   email: string | null;
   phone: string | null;
   name: string;

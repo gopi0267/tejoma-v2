@@ -80,7 +80,6 @@ router.post('/candidate-resume/file', requireCandidateAuth, resumeParseLimiter, 
     }
 
     const candidateId = req.candidate!.candidate_id;
-    const companyId = req.candidate!.company_id;
 
     // Get existing resume file (if any)
     const existing = await db.getCandidateResumeFile(candidateId);
@@ -94,7 +93,7 @@ router.post('/candidate-resume/file', requireCandidateAuth, resumeParseLimiter, 
     }
 
     // Update resume file metadata in local database (Item 5: no longer calls monolith)
-    const updated = await db.upsertCandidateResumeFile(candidateId, companyId, {
+    const updated = await db.upsertCandidateResumeFile(candidateId, {
       resume_file_path: storedPath,
       resume_original_filename: req.file.originalname,
       resume_file_uploaded_at: new Date().toISOString(),

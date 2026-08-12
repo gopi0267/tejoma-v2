@@ -7,7 +7,11 @@ BEGIN;
 CREATE TABLE resume_service.candidate_resume_files (
   id BIGSERIAL PRIMARY KEY,
   candidate_id INTEGER NOT NULL UNIQUE,
-  company_id INTEGER NOT NULL,
+  -- Nullable: a candidate access token carries no company_id (identity-service's
+  -- CandidateTokenPayload has never included one - candidates are not company-scoped here), so the
+  -- candidate self-service upload path has no company to record. NOT NULL made every candidate
+  -- upload fail the insert. The recruiter-side path, which does know a company, still populates it.
+  company_id INTEGER,
   resume_file_path VARCHAR(500),
   resume_original_filename VARCHAR(255),
   resume_file_uploaded_at TIMESTAMP,
