@@ -63,6 +63,14 @@ services:
   # APPLICATION SERVICES
   # ============================================================================
 
+  # ROLLBACK ONLY. No Tier 0 service declares `depends_on: app` any more (12 did, removed after
+  # the full migration completed). That mattered for two reasons:
+  #   1. `docker compose up -d <any-dependent>` silently STARTED the monolith, which invalidated a
+  #      monolith-off test run during the final audit before it was caught.
+  #   2. `condition: service_healthy` on the monolith meant the whole stack refused to start if the
+  #      monolith was unhealthy - the exact coupling this migration exists to remove.
+  # Nothing routes to it: MONOLITH_FALLBACK_ENABLED=false and no service holds a business
+  # dependency on it. Start it explicitly (`docker compose start app`) only to roll back.
   app:
     build:
       context: .
@@ -334,8 +342,6 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
-      app:
-        condition: service_healthy
       identity-service:
         condition: service_healthy
       matching-scoring-service:
@@ -368,9 +374,6 @@ services:
       MONOLITH_INTERNAL_URL: http://app:3006
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    depends_on:
-      app:
-        condition: service_healthy
     restart: unless-stopped
     networks:
       - internal
@@ -399,8 +402,6 @@ services:
       REDIS_URL: redis://redis:6379
       UPLOAD_SERVICE_URL: http://app:3006
     depends_on:
-      app:
-        condition: service_healthy
       redis:
         condition: service_healthy
     volumes:
@@ -430,9 +431,6 @@ services:
       CANDIDATE_CORE_SERVICE_URL: http://candidate-core-service:4019
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    depends_on:
-      app:
-        condition: service_healthy
     restart: unless-stopped
     networks:
       - internal
@@ -462,9 +460,6 @@ services:
       DB_NAME: tejoma_analytics
       DB_USER: postgres
       DB_PASSWORD: "3268"
-    depends_on:
-      app:
-        condition: service_healthy
     restart: unless-stopped
     networks:
       - internal
@@ -493,9 +488,6 @@ services:
       MONOLITH_INTERNAL_URL: http://app:3006
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    depends_on:
-      app:
-        condition: service_healthy
     restart: unless-stopped
     networks:
       - internal
@@ -551,9 +543,6 @@ services:
       MONOLITH_INTERNAL_URL: http://app:3006
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    depends_on:
-      app:
-        condition: service_healthy
     restart: unless-stopped
     networks:
       - internal
@@ -693,8 +682,6 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
-      app:
-        condition: service_healthy
       candidate-core-service:
         condition: service_healthy
       matching-scoring-service:
@@ -728,9 +715,6 @@ services:
       MATCHING_DECISION_SERVICE_URL: http://matching-decision-service:4020
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    depends_on:
-      app:
-        condition: service_healthy
     restart: unless-stopped
     networks:
       - internal
@@ -764,8 +748,6 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
-      app:
-        condition: service_healthy
       job-service:
         condition: service_healthy
       candidate-core-service:
@@ -803,8 +785,6 @@ services:
       - "host.docker.internal:host-gateway"
     depends_on:
       matching-ml-service:
-        condition: service_healthy
-      app:
         condition: service_healthy
     restart: unless-stopped
     networks:
@@ -856,8 +836,6 @@ services:
       MATCHING_DECISION_SERVICE_URL: http://matching-decision-service:4020
       MONOLITH_URL: http://app:3006
     depends_on:
-      app:
-        condition: service_healthy
       identity-service:
         condition: service_healthy
       platform-governance-service:
