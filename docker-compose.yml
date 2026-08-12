@@ -1,5 +1,47 @@
 name: tejoma
 
+# Service-to-service URLs on the compose network.
+#
+# Every service loads .env.local via env_file, and .env.local is a HOST-oriented dev file - its
+# *_SERVICE_URL values are all http://localhost:<port>, which is correct when you run a service
+# directly on your machine and completely wrong inside a container, where localhost is that
+# container itself. Each service's own `environment:` block overrode only two or three of these,
+# so in the running stack most cross-service calls resolved to localhost and failed.
+#
+# Measured effect before this block existed: candidate-service could not reach job-service, so
+# GET /api/candidate-decisions, /candidate-decisions/active and /candidate-applications returned
+# rows with job_title/company_name/location all null ("fetch failed / jobs-by-ids" in its logs),
+# and the gateway's own RESUME_SERVICE_URL pointed at resume-service:4007 where nothing listens,
+# making /api/candidate-resume and /api/parse-resume unreachable.
+#
+# Ports below are the ports each container actually listens on, verified by probing /live on the
+# compose network - NOT copied from .env.local. Merged into each service with `<<: *service-urls`
+# ahead of that service's own keys, so a service can still override one deliberately.
+x-service-urls: &service-urls
+  IDENTITY_SERVICE_URL: http://identity-service:4001
+  PLATFORM_GOVERNANCE_SERVICE_URL: http://platform-governance-service:4002
+  TENANT_DIRECTORY_SERVICE_URL: http://tenant-directory-service:4003
+  JD_PARSER_SERVICE_URL: http://jd-parser-service:4004
+  CANDIDATE_SERVICE_URL: http://candidate-service:4005
+  CHAT_SERVICE_URL: http://chat-service:4006
+  RECRUITING_SERVICE_URL: http://recruiting-service:4009
+  ANALYTICS_SERVICE_URL: http://analytics-service:4010
+  MATCHING_EVALUATION_SERVICE_URL: http://matching-evaluation-service:4011
+  MATCHING_REASONING_SERVICE_URL: http://matching-reasoning-service:4012
+  MATCHING_SKILL_DISCOVERY_SERVICE_URL: http://matching-skill-discovery-service:4013
+  MATCHING_BGE_SHADOW_SERVICE_URL: http://matching-bge-shadow-service:4014
+  ROLE_INTELLIGENCE_SERVICE_URL: http://role-intelligence-service:4015
+  CAREER_INTELLIGENCE_SERVICE_URL: http://career-intelligence-service:4016
+  DYNAMIC_WEIGHTING_SERVICE_URL: http://dynamic-weighting-service:4017
+  JOB_SERVICE_URL: http://job-service:4018
+  CANDIDATE_CORE_SERVICE_URL: http://candidate-core-service:4019
+  MATCHING_DECISION_SERVICE_URL: http://matching-decision-service:4020
+  MATCHING_SCORING_SERVICE_URL: http://matching-scoring-service:4021
+  REALTIME_SERVICE_URL: http://realtime-service:4030
+  RESUME_SERVICE_URL: http://resume-service:4031
+  MONOLITH_INTERNAL_URL: http://app:3006
+  MONOLITH_URL: http://app:3006
+
 networks:
   internal:
     driver: bridge
@@ -22,6 +64,7 @@ services:
     env_file:
       - .env.local
     environment:
+      <<: *service-urls
       # Overrides for container networking - everything else (DB_PASSWORD, JWT_SECRET,
       # GEMINI_API_KEY, GMAIL_*, TWILIO_*) is inherited unchanged from .env.local above.
       NODE_ENV: production
@@ -59,6 +102,7 @@ services:
       context: ./realtime-service
       dockerfile: Dockerfile
     environment:
+      <<: *service-urls
       NODE_ENV: ${NODE_ENV:-production}
       REDIS_HOST: redis
       REDIS_PORT: 6379
@@ -162,6 +206,7 @@ services:
     env_file:
       - .env.local
     environment:
+      <<: *service-urls
       NODE_ENV: production
       DB_HOST: host.docker.internal
       DB_NAME: tejoma_identity
@@ -188,6 +233,7 @@ services:
     env_file:
       - .env.local
     environment:
+      <<: *service-urls
       NODE_ENV: production
       DB_HOST: host.docker.internal
       DB_NAME: tejoma_platform_governance
@@ -218,6 +264,7 @@ services:
     env_file:
       - .env.local
     environment:
+      <<: *service-urls
       NODE_ENV: production
       DB_HOST: host.docker.internal
       DB_NAME: tejoma_tenant_directory
@@ -244,6 +291,7 @@ services:
     env_file:
       - .env.local
     environment:
+      <<: *service-urls
       NODE_ENV: production
       JD_NLP_SERVICE_URL: http://jd-nlp-service:8008
     depends_on:
@@ -270,6 +318,7 @@ services:
     env_file:
       - .env.local
     environment:
+      <<: *service-urls
       NODE_ENV: production
       DB_HOST: host.docker.internal
       DB_NAME: tejoma_candidate
@@ -306,6 +355,7 @@ services:
     env_file:
       - .env.local
     environment:
+      <<: *service-urls
       NODE_ENV: production
       DB_HOST: host.docker.internal
       DB_NAME: tejoma_chat
@@ -336,6 +386,7 @@ services:
     env_file:
       - .env.local
     environment:
+      <<: *service-urls
       NODE_ENV: production
       DB_HOST: host.docker.internal
       MONOLITH_INTERNAL_URL: http://app:3006
@@ -363,6 +414,7 @@ services:
     env_file:
       - .env.local
     environment:
+      <<: *service-urls
       NODE_ENV: production
       DB_HOST: host.docker.internal
       DB_NAME: tejoma_recruiting_service
@@ -396,6 +448,7 @@ services:
     env_file:
       - .env.local
     environment:
+      <<: *service-urls
       NODE_ENV: production
       MONOLITH_INTERNAL_URL: http://app:3006
       DB_HOST: host.docker.internal
@@ -427,6 +480,7 @@ services:
     env_file:
       - .env.local
     environment:
+      <<: *service-urls
       NODE_ENV: production
       DB_HOST: host.docker.internal
       DB_NAME: tejoma_matching_evaluation
@@ -457,6 +511,7 @@ services:
     env_file:
       - .env.local
     environment:
+      <<: *service-urls
       NODE_ENV: production
       DB_HOST: host.docker.internal
       DB_NAME: tejoma_matching_reasoning
@@ -483,6 +538,7 @@ services:
     env_file:
       - .env.local
     environment:
+      <<: *service-urls
       NODE_ENV: production
       DB_HOST: host.docker.internal
       DB_NAME: tejoma_matching_skill_discovery
@@ -513,6 +569,7 @@ services:
     env_file:
       - .env.local
     environment:
+      <<: *service-urls
       NODE_ENV: production
       DB_HOST: host.docker.internal
       DB_NAME: tejoma_matching_bge_shadow
@@ -539,6 +596,7 @@ services:
     env_file:
       - .env.local
     environment:
+      <<: *service-urls
       NODE_ENV: production
       DB_HOST: host.docker.internal
       DB_NAME: tejoma_role_intelligence
@@ -565,6 +623,7 @@ services:
     env_file:
       - .env.local
     environment:
+      <<: *service-urls
       NODE_ENV: production
       DB_HOST: host.docker.internal
       DB_NAME: tejoma_career_intelligence
@@ -591,6 +650,7 @@ services:
     env_file:
       - .env.local
     environment:
+      <<: *service-urls
       NODE_ENV: production
       DB_HOST: host.docker.internal
       DB_NAME: tejoma_dynamic_weighting
@@ -617,6 +677,7 @@ services:
     env_file:
       - .env.local
     environment:
+      <<: *service-urls
       NODE_ENV: production
       DB_HOST: host.docker.internal
       DB_NAME: tejoma_job
@@ -653,6 +714,7 @@ services:
     env_file:
       - .env.local
     environment:
+      <<: *service-urls
       NODE_ENV: production
       DB_HOST: host.docker.internal
       DB_NAME: tejoma_candidate_core
@@ -684,6 +746,7 @@ services:
     env_file:
       - .env.local
     environment:
+      <<: *service-urls
       NODE_ENV: production
       DB_HOST: host.docker.internal
       DB_NAME: tejoma_matching_decision
@@ -724,6 +787,7 @@ services:
     env_file:
       - .env.local
     environment:
+      <<: *service-urls
       NODE_ENV: production
       DB_HOST: host.docker.internal
       DB_NAME: tejoma_matching_scoring
@@ -765,13 +829,17 @@ services:
     env_file:
       - .env.local
     environment:
+      <<: *service-urls
       NODE_ENV: production
       IDENTITY_SERVICE_URL: http://identity-service:4001
       PLATFORM_GOVERNANCE_SERVICE_URL: http://platform-governance-service:4002
       JD_PARSER_SERVICE_URL: http://jd-parser-service:4004
       CANDIDATE_SERVICE_URL: http://candidate-service:4005
       CHAT_SERVICE_URL: http://chat-service:4006
-      RESUME_SERVICE_URL: http://resume-service:4007
+      # resume-service listens on 4031 (its Dockerfile EXPOSE), not 4007 - nothing has ever
+      # listened on 4007, so /api/candidate-resume and /api/parse-resume both 502'd at the
+      # gateway. Verified by probing both ports on the compose network.
+      RESUME_SERVICE_URL: http://resume-service:4031
       RECRUITING_SERVICE_URL: http://recruiting-service:4009
       ANALYTICS_SERVICE_URL: http://analytics-service:4010
       MATCHING_EVALUATION_SERVICE_URL: http://matching-evaluation-service:4011

@@ -558,14 +558,21 @@ export async function getLatestCandidateDecision(candidateAccountId: number, job
   }
 }
 
+// NO JOIN to jobs/companies here. This service's database owns candidate_* tables only - it has
+// no `jobs` and no `companies` table, so the LEFT JOINs these queries originally carried over
+// from the monolith (where all three tables shared one database) raised
+// `relation "jobs" does not exist` on EVERY call. The catch below then swallowed it and returned
+// [], so /api/candidate-decisions, /candidate-decisions/active and everything built on them
+// silently served empty lists instead of failing - the worst possible failure mode.
+//
+// Job/company display fields are hydrated by the route layer from job-service via
+// jobServiceClient.getJobsByIds(), the same cross-service pattern candidateAnalytics already uses.
+// company_id is selected so callers have the scope key that call needs.
 export async function getCandidateDecisions(candidateAccountId: number): Promise<any[]> {
   try {
     const result = await pool.query(
-      `SELECT cd.id, cd.job_id, cd.action, cd.decision_type, cd.timestamp,
-              j.title AS job_title, c.name AS company_name, c.logo_url AS company_logo_url
+      `SELECT cd.id, cd.job_id, cd.company_id, cd.action, cd.decision_type, cd.timestamp
        FROM candidate_decisions cd
-       LEFT JOIN jobs j ON j.id = cd.job_id
-       LEFT JOIN companies c ON c.id = j.company_id
        WHERE cd.candidate_account_id = $1
        ORDER BY cd.timestamp DESC, cd.id DESC`,
       [candidateAccountId]
@@ -587,11 +594,9 @@ export async function getCandidateActiveDecisions(candidateAccountId: number, ac
     }
     const result = await pool.query(
       `SELECT * FROM (
-         SELECT DISTINCT ON (cd.job_id) cd.id, cd.job_id, cd.action, cd.decision_type, cd.timestamp,
-                j.title AS job_title, j.location AS location, c.name AS company_name, c.logo_url AS company_logo_url
+         SELECT DISTINCT ON (cd.job_id) cd.id, cd.job_id, cd.company_id, cd.action,
+                cd.decision_type, cd.timestamp
          FROM candidate_decisions cd
-         LEFT JOIN jobs j ON j.id = cd.job_id
-         LEFT JOIN companies c ON c.id = j.company_id
          WHERE cd.candidate_account_id = $1
          ORDER BY cd.job_id, cd.timestamp DESC, cd.id DESC
        ) latest
@@ -635,18 +640,30 @@ export const db = {
   getCandidateDecisions,
   getCandidateActiveDecisions,
   getCandidateMatches,
+  // candidateAnalytics.routes.ts reaches for db.pool.query directly for its aggregate reads.
+  // Without this key that was `undefined.query(...)` - a TypeError on every analytics request,
+  // caught by the route handler and reported as a generic 500.
+  pool,
 };
 
+// mutual_matches is keyed by candidate_id (NOT candidate_account_id) and has no `status` or
+// `recruiter_id` column - it records interest from each side (candidate_interested,
+// job_interested) plus matched_at. The previous version of this query referenced four columns
+// that do not exist on the table plus two tables this database does not have, so it threw and
+// the catch returned [] - /api/candidate-matches always answered with an empty list.
+// `status` is derived here so the response keeps a single stable field for callers.
 export async function getCandidateMatches(candidateAccountId: number): Promise<any[]> {
   try {
     const result = await pool.query(
-      `SELECT mm.id, mm.job_id, mm.recruiter_id, mm.status, mm.created_at,
-              j.title as job_title, c.name as company_name, c.logo_url as company_logo
+      `SELECT mm.id, mm.job_id, mm.company_id, mm.candidate_account_id,
+              mm.candidate_interested, mm.job_interested, mm.matched_at, mm.created_at,
+              CASE WHEN mm.candidate_interested AND mm.job_interested THEN 'matched'
+                   WHEN mm.candidate_interested THEN 'candidate_interested'
+                   WHEN mm.job_interested THEN 'job_interested'
+                   ELSE 'pending' END AS status
        FROM mutual_matches mm
-       LEFT JOIN jobs j ON j.id = mm.job_id
-       LEFT JOIN companies c ON c.id = j.company_id
        WHERE mm.candidate_account_id = $1
-       ORDER BY mm.created_at DESC`,
+       ORDER BY mm.matched_at DESC NULLS LAST, mm.created_at DESC`,
       [candidateAccountId]
     );
     return result.rows;

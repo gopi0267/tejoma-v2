@@ -17,10 +17,29 @@ import { Router } from 'express';
 import { requireCandidateAuth } from '../middleware/auth.middleware.js';
 import { db } from '../db.js';
 import { logger } from '../utils/logger.js';
+import { hydrateJobsForRows } from '../services/jobHydration.js';
 import type { Request, Response } from 'express';
 
 const router = Router();
 router.use(requireCandidateAuth);
+
+// job_title/company_name used to come from a SQL JOIN that could never resolve here - this
+// database has no jobs/companies table. They are fetched from job-service instead and merged on
+// under the same field names the response already used, so the API shape is unchanged.
+async function withJobFields(rows: any[]): Promise<any[]> {
+  if (rows.length === 0) return rows;
+  const jobsById = await hydrateJobsForRows(rows);
+  return rows.map((row) => {
+    const job = jobsById.get(row.job_id) as any;
+    return {
+      ...row,
+      job_title: job?.title ?? null,
+      location: job?.location ?? null,
+      company_name: job?.company_name ?? null,
+      company_logo_url: job?.company_logo_url ?? null,
+    };
+  });
+}
 
 const DECISION_TO_ACTION: Record<string, number> = { swipe_right: 1, swipe_left: 0, apply: 1 };
 const LIKE_EXPIRY_DAYS = 30;
@@ -72,7 +91,7 @@ router.post('/candidate-decisions', async (req: Request, res: Response) => {
 router.get('/candidate-decisions', async (req: Request, res: Response) => {
   try {
     const candidateAccountId = req.candidate!.candidate_id;
-    const decisions = await db.getCandidateDecisions(candidateAccountId);
+    const decisions = await withJobFields(await db.getCandidateDecisions(candidateAccountId));
     res.json({ decisions });
   } catch (error) {
     logger.error({ err: (error as Error).message }, 'Failed to load decision history');
@@ -86,7 +105,7 @@ router.get('/candidate-decisions/active', async (req: Request, res: Response) =>
     const candidateAccountId = req.candidate!.candidate_id;
     const { action } = req.query;
     const parsedAction = action !== undefined ? parseInt(action as string, 10) : undefined;
-    const decisions = await db.getCandidateActiveDecisions(candidateAccountId, parsedAction);
+    const decisions = await withJobFields(await db.getCandidateActiveDecisions(candidateAccountId, parsedAction));
     res.json({ decisions });
   } catch (error) {
     logger.error({ err: (error as Error).message }, 'Failed to load decisions');

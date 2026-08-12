@@ -7,56 +7,58 @@ import { Router } from 'express';
 import { requireCandidateAuth } from '../middleware/auth.middleware.js';
 import { db } from '../db.js';
 import { logger } from '../utils/logger.js';
+import { hydrateJobsForRows } from '../services/jobHydration.js';
 
 const router = Router();
 router.use(requireCandidateAuth);
 
+function statusForDecision(d: any): string {
+  if (d.decision_type === 'apply') return 'applied';
+  return Number(d.action) === 1 ? 'interested' : 'rejected';
+}
+
 async function getApplicationsForCandidate(candidateAccountId: number) {
-  try {
-    const decisions = await db.getCandidateDecisions(candidateAccountId);
+  const decisions = await db.getCandidateDecisions(candidateAccountId);
+  if (!decisions || decisions.length === 0) {
+    return { applications: [] };
+  }
 
-    if (!decisions || decisions.length === 0) {
-      return { applications: [] };
-    }
+  const jobsById = await hydrateJobsForRows(decisions);
 
-    const applications = decisions.map((d: any) => ({
+  const applications = decisions.map((d: any) => {
+    const job = jobsById.get(d.job_id) as any;
+    return {
       id: d.id,
       jobId: d.job_id,
-      jobTitle: d.job_title,
-      companyName: d.company_name,
-      companyLogo: d.company_logo_url,
-      status: d.decision_type === 'apply' ? 'applied' : (d.action === 1 ? 'interested' : 'rejected'),
+      jobTitle: job?.title ?? null,
+      companyName: job?.company_name ?? null,
+      companyLogo: job?.company_logo_url ?? null,
+      location: job?.location ?? null,
+      status: statusForDecision(d),
       appliedAt: d.timestamp,
-    }));
+    };
+  });
 
-    return { applications };
-  } catch (error) {
-    logger.error({ err: (error as Error).message }, 'Error fetching applications');
-    throw error;
-  }
+  return { applications };
 }
 
 async function getApplicationForCandidate(candidateAccountId: number, jobId: number) {
-  try {
-    const decision = await db.getLatestCandidateDecision(candidateAccountId, jobId);
+  const decision = await db.getLatestCandidateDecision(candidateAccountId, jobId);
+  if (!decision) return null;
 
-    if (!decision) {
-      return { error: 'Application not found', status: 404 };
-    }
+  const jobsById = await hydrateJobsForRows([decision]);
+  const job = jobsById.get(decision.job_id) as any;
 
-    return {
-      id: decision.id,
-      jobId: decision.job_id,
-      jobTitle: decision.job_title,
-      companyName: decision.company_name,
-      companyLogo: decision.company_logo_url,
-      status: decision.decision_type === 'apply' ? 'applied' : (decision.action === 1 ? 'interested' : 'rejected'),
-      appliedAt: decision.timestamp,
-    };
-  } catch (error) {
-    logger.error({ err: (error as Error).message }, 'Error fetching application');
-    throw error;
-  }
+  return {
+    id: decision.id,
+    jobId: decision.job_id,
+    jobTitle: job?.title ?? null,
+    companyName: job?.company_name ?? null,
+    companyLogo: job?.company_logo_url ?? null,
+    location: job?.location ?? null,
+    status: statusForDecision(decision),
+    appliedAt: decision.timestamp,
+  };
 }
 
 router.get('/candidate-applications', async (req, res) => {
@@ -78,8 +80,8 @@ router.get('/candidate-applications/:jobId', async (req, res) => {
       return res.status(400).json({ error: 'Invalid job id' });
     }
     const result = await getApplicationForCandidate(candidateAccountId, jobId);
-    if (result.status === 404) {
-      return res.status(404).json({ error: result.error });
+    if (!result) {
+      return res.status(404).json({ error: 'Application not found' });
     }
     res.json(result);
   } catch (error) {
