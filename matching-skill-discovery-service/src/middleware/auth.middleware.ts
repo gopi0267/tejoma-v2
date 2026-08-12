@@ -7,7 +7,7 @@
  */
 import jwt from 'jsonwebtoken';
 import type { Request, Response, NextFunction } from 'express';
-import { JWT_SECRET } from '../config/env.js';
+import { IDENTITY_JWT_PUBLIC_KEY } from '../config/env.js';
 
 export interface AccessTokenPayload {
   user_id: number;
@@ -40,7 +40,17 @@ function extractToken(req: Request): string | null {
 
 function verifyAccessToken(token: string): AccessTokenPayload | null {
   try {
-    return jwt.verify(token, JWT_SECRET) as AccessTokenPayload;
+    // RS256 against Identity Service's public key. This previously verified the monolith's
+    // HS256/shared-JWT_SECRET token, but staff auth cut over to Identity Service, which signs
+    // RS256 - so every real staff token was rejected and this service's entire gateway-routed
+    // staff surface answered 401 to logged-in admins.
+    const payload = jwt.verify(token, IDENTITY_JWT_PUBLIC_KEY, { algorithms: ['RS256'] }) as AccessTokenPayload;
+
+    // Staff and candidate tokens share a signing key, so require the staff-shaped claims -
+    // a candidate token must not satisfy requireAuth with company_id undefined.
+    if (typeof payload?.user_id !== 'number' || typeof payload?.company_id !== 'number') return null;
+
+    return payload;
   } catch {
     return null;
   }

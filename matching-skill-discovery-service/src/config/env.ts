@@ -30,6 +30,10 @@ export const NODE_ENV = process.env.NODE_ENV || 'development';
 export const IS_PRODUCTION = NODE_ENV === 'production';
 export const PORT = parseInt(process.env.PORT || '4013', 10);
 
+// Identity Service's RS256 public key - staff access tokens are issued by Identity Service and
+// verified here. JWT_SECRET below is retained only for any remaining legacy/internal use.
+export const IDENTITY_JWT_PUBLIC_KEY = process.env.IDENTITY_JWT_PUBLIC_KEY || '';
+
 export const JWT_SECRET = process.env.JWT_SECRET || 'dev-only-insecure-secret';
 export const MONOLITH_INTERNAL_URL = process.env.MONOLITH_INTERNAL_URL || '';
 export const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
