@@ -1,0 +1,129 @@
+================================================================================
+TEJOMA MIGRATION - CONCRETE GAPS REQUIRING WORK
+================================================================================
+
+ROUTES STILL PROXYING TO MONOLITH (Must be fixed):
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. GET /api/candidate-jobs
+   └─ File: candidate-service/src/routes/candidateJobs.routes.ts
+   └─ Function: getOpenJobsForCandidate() [from monolithClient]
+   └─ Backend call: monolith /internal/candidate/jobs
+   └─ Action needed: Create local implementation with job-service integration
+   └─ Effort: 2-3 days
+
+2. GET /api/candidate-decisions
+   └─ File: candidate-service/src/routes/candidateDecisions.routes.ts
+   └─ Function: getCandidateDecisions() [from monolithClient]
+   └─ Backend call: monolith /internal/candidate/decisions
+   └─ Action needed: Create candidate_decisions table, migrate data
+   └─ Effort: 1-2 days
+
+3. GET /api/candidate-applications
+   └─ File: candidate-service/src/routes/candidateApplications.routes.ts
+   └─ Function: getCandidateApplications() [from monolithClient]
+   └─ Backend call: monolith /internal/candidate/applications
+   └─ Action needed: Create candidate_applications table, migrate data
+   └─ Effort: 1-2 days
+
+4. GET /api/candidate-matches
+   └─ File: candidate-service/src/routes/candidateMatches.routes.ts
+   └─ Function: getCandidateMatches() [from monolithClient]
+   └─ Backend call: monolith /internal/candidate/matches
+   └─ Action needed: Mirror matching-decision-service data locally
+   └─ Effort: 2-3 days
+
+5. GET /api/candidate-analytics
+   └─ File: candidate-service/src/routes/candidateAnalytics.routes.ts
+   └─ Function: getCandidateAnalytics() [from monolithClient]
+   └─ Backend call: monolith /internal/candidate/analytics
+   └─ Action needed: Aggregate data in analytics-service
+   └─ Effort: 2-3 days
+
+6. GET /api/candidate-search?shortlisted=true
+   └─ File: candidate-service/src/routes/candidateSearch.routes.ts
+   └─ Function: getShortlistedCandidateAccounts() [from monolithClient]
+   └─ Backend call: monolith /internal/candidate-search/shortlisted
+   └─ Action needed: Query swipes from matching-decision-service
+   └─ Effort: 2-3 days
+
+7. POST /api/jobs, PUT /api/jobs/:id, DELETE /api/jobs/:id
+   └─ File: job-service/src/routes/jobs.routes.ts (lines 83-181)
+   └─ Action needed: Verify independent or proxy to monolith
+   └─ Effort: 1-2 days
+
+8. POST /api/swipes, POST /api/recruiter-review/:id
+   └─ File: matching-decision-service/src/routes
+   └─ Action needed: Verify independent or proxy to monolith
+   └─ Effort: 1-2 days
+
+MULTI-TENANCY GAPS:
+━━━━━━━━━━━━━━━━━━
+
+1. No database-level row-level security (RLS) policies
+   └─ Impact: Data isolation relies on application code only
+   └─ Risk: HIGH - One bug can expose all tenant data
+   └─ Action: Implement PostgreSQL RLS policies for all tables
+   └─ Effort: 3-4 days
+
+2. No tenant-aware encryption
+   └─ Impact: Sensitive data (PII, salary info) not encrypted per tenant
+   └─ Risk: MEDIUM - If database is compromised, all data is exposed
+   └─ Action: Add column-level encryption with per-tenant keys
+   └─ Effort: 2-3 days
+
+3. No tenant audit logging
+   └─ Impact: Can't track which code accessed which tenant's data
+   └─ Risk: MEDIUM - Compliance violations if data access isn't logged
+   └─ Action: Add audit logging for all data access
+   └─ Effort: 2-3 days
+
+4. Tenant ID comes from application, not verified at DB level
+   └─ Impact: If tenant ID is manipulated, isolation breaks
+   └─ Risk: MEDIUM - Auth middleware must be perfect
+   └─ Action: Add database triggers to enforce company_id
+   └─ Effort: 1-2 days
+
+DATA SYNCHRONIZATION GAPS:
+━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. No dual-write mechanism implemented
+   └─ Impact: When microservices update, monolith doesn't know
+   └─ Action: Implement dual-write pattern for data consistency
+   └─ Effort: 3-4 days
+
+2. No ETL/sync jobs
+   └─ Impact: Microservices don't have historical data
+   └─ Action: Create ETL jobs to backfill and sync data
+   └─ Effort: 2-3 days
+
+3. No consistency verification
+   └─ Impact: Can't detect if microservice and monolith data diverge
+   └─ Action: Add reconciliation jobs to verify data consistency
+   └─ Effort: 2-3 days
+
+TESTING GAPS:
+━━━━━━━━━━━━
+
+1. No end-to-end tests for candidate workflows
+   └─ Action: Write integration tests for all candidate routes
+   └─ Effort: 3-4 days
+
+2. No tests for tenant isolation
+   └─ Action: Write security tests to verify cross-tenant access is blocked
+   └─ Effort: 2-3 days
+
+3. No monolith-off tests for all endpoints
+   └─ Action: Verify ALL endpoints work without monolith
+   └─ Effort: 1-2 days
+
+SUMMARY:
+━━━━━━━
+
+Total concrete gaps: 20+
+Total effort to complete: 6-8 weeks
+Current status: ~40% complete
+Remaining work: ~60%
+
+THIS IS NOT READY FOR PRODUCTION
+================================================================================

@@ -518,6 +518,94 @@ export async function getCandidateActivityTrend(candidateAccountId: number, days
   }
 }
 
+// ==================== candidate_decisions (candidate swipes/decisions) ====================
+// Candidate decisions: swipe_right, swipe_left, apply on jobs
+// action: 1 = swipe_right or apply, 0 = swipe_left
+
+export async function recordCandidateDecision(params: {
+  candidateAccountId: number;
+  jobId: number;
+  action: number;
+  decisionType: 'swipe_right' | 'swipe_left' | 'apply';
+}): Promise<any | null> {
+  try {
+    const result = await pool.query(
+      `INSERT INTO candidate_decisions
+       (candidate_account_id, job_id, action, decision_type, timestamp)
+       VALUES ($1, $2, $3, $4, NOW())
+       RETURNING *`,
+      [params.candidateAccountId, params.jobId, params.action, params.decisionType]
+    );
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error('Error recording candidate decision:', error);
+    return null;
+  }
+}
+
+export async function getLatestCandidateDecision(candidateAccountId: number, jobId: number): Promise<any | null> {
+  try {
+    const result = await pool.query(
+      `SELECT * FROM candidate_decisions
+       WHERE candidate_account_id = $1 AND job_id = $2
+       ORDER BY timestamp DESC, id DESC LIMIT 1`,
+      [candidateAccountId, jobId]
+    );
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error('Error fetching latest candidate decision:', error);
+    return null;
+  }
+}
+
+export async function getCandidateDecisions(candidateAccountId: number): Promise<any[]> {
+  try {
+    const result = await pool.query(
+      `SELECT cd.id, cd.job_id, cd.action, cd.decision_type, cd.timestamp,
+              j.title AS job_title, c.name AS company_name, c.logo_url AS company_logo_url
+       FROM candidate_decisions cd
+       LEFT JOIN jobs j ON j.id = cd.job_id
+       LEFT JOIN companies c ON c.id = j.company_id
+       WHERE cd.candidate_account_id = $1
+       ORDER BY cd.timestamp DESC, cd.id DESC`,
+      [candidateAccountId]
+    );
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching candidate decisions:', error);
+    return [];
+  }
+}
+
+export async function getCandidateActiveDecisions(candidateAccountId: number, action?: number): Promise<any[]> {
+  try {
+    const params: any[] = [candidateAccountId];
+    let actionFilter = '';
+    if (action !== undefined) {
+      params.push(action);
+      actionFilter = `AND latest.action = $${params.length}`;
+    }
+    const result = await pool.query(
+      `SELECT * FROM (
+         SELECT DISTINCT ON (cd.job_id) cd.id, cd.job_id, cd.action, cd.decision_type, cd.timestamp,
+                j.title AS job_title, j.location AS location, c.name AS company_name, c.logo_url AS company_logo_url
+         FROM candidate_decisions cd
+         LEFT JOIN jobs j ON j.id = cd.job_id
+         LEFT JOIN companies c ON c.id = j.company_id
+         WHERE cd.candidate_account_id = $1
+         ORDER BY cd.job_id, cd.timestamp DESC, cd.id DESC
+       ) latest
+       WHERE 1=1 ${actionFilter}
+       ORDER BY latest.timestamp DESC`,
+      params
+    );
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching active candidate decisions:', error);
+    return [];
+  }
+}
+
 export const db = {
   healthCheck,
   getCandidateAccountById,
@@ -542,6 +630,10 @@ export const db = {
   getCandidateProfileViewCount,
   getCandidateApplicationStatusCounts,
   getCandidateActivityTrend,
+  recordCandidateDecision,
+  getLatestCandidateDecision,
+  getCandidateDecisions,
+  getCandidateActiveDecisions,
 };
 
 export { pool };
