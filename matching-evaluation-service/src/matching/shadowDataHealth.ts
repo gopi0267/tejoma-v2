@@ -5,8 +5,9 @@
  * db.getAllProficiencyShadowScoresForCompany (a local read against this database's own,
  * dual-written mirror of proficiency_shadow_scores - Batch 25) is unchanged, but
  * db.getJobById(id, companyId) (a local monolith DB read) became
- * monolithClient.getJobTitles(companyId, jobIds) (a proxy call, batched instead of per-ID - jobs
- * remain monolith-owned), and `inferSeniority` came from this service's own
+ * jobServiceClient.getJobTitles(companyId, jobIds) - a batched, company-scoped call to
+ * job-service, which owns the jobs table (this previously proxied to the monolith on the
+ * now-obsolete premise that jobs remained monolith-owned), and `inferSeniority` came from this service's own
  * matching/seniorityInference.ts instead of the monolith's careerIntelligence/jobSequence.ts (see
  * that file's header comment for why a small, separate copy - not a shared import - is correct
  * here).
@@ -15,7 +16,7 @@
  * whenever someone checks in - see GET /api/shadow-data-health.
  */
 import { db } from '../db.js';
-import { getJobTitles } from '../services/monolithClient.js';
+import { getJobTitles } from '../services/jobServiceClient.js';
 import { inferSeniority } from './seniorityInference.js';
 import type { ProficiencyShadowScore } from '../types.js';
 
