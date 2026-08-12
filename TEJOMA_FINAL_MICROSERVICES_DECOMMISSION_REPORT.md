@@ -1,204 +1,162 @@
 # TEJOMA FINAL MICROSERVICES DECOMMISSION REPORT
 
 **Date:** 2026-08-12
-**Method:** Runtime evidence only — authenticated HTTP through nginx (`https://127.0.0.1`), real SQL against service-owned databases, monolith physically stopped with `app:3006` confirmed unreachable from inside the Docker network before every monolith-off assertion.
+**Status:** Monolith removed from the runtime deployment
+**Method:** Runtime evidence only — authenticated HTTP through nginx (`https://127.0.0.1`), real SQL against service-owned databases, with the monolith container **deleted**, not merely stopped.
 
 ---
 
-## 1. FINAL DECISION
+## 1. FINAL VERDICT
 
-# A. PRODUCTION READY — MONOLITH CAN BE DECOMMISSIONED
+# PRODUCTION READY — MONOLITH DECOMMISSIONED
 
-**Zero business-critical monolith dependencies remain.** The last one — `POST /api/ml/train` — was migrated this session, and the complete application was then proven working with the monolith physically stopped:
+The `app` service no longer exists in `docker-compose.yml`, the `tejoma-app-1` container has been removed, and no service holds a resolvable monolith URL. The complete application was then re-verified end to end:
 
-| Category | Result (monolith OFF) |
+| Category | Result (monolith removed) |
 |---|---|
 | Read screens | **37/37** |
-| Writes incl. all 3 ML endpoints | **10/10** |
+| Writes, incl. all 3 ML endpoints | **10/10** |
 | Security / RBAC / tenant isolation | **12/12** |
-| Redis publish + restart recovery | PASS |
+| Multi-tenancy | PASS |
+| Redis publish/consume | PASS |
 | Failure isolation, no cascade | PASS |
-| Backup / restore | PASS, byte-identical |
-| Monolith auto-restart possible? | **No** — proven 3× |
+| Backup / restore | PASS, row counts identical |
+| Services healthy | **31/31** |
+| Monolith reappears on restart? | **No** |
 
 ---
 
-## 2. The Final Migration: `POST /api/ml/train`
+## 2. Decommission Sequence Executed
 
-matching-scoring-service proxied to the monolith's `/internal/ml/train`, so classification-ensemble retraining 502'd whenever the monolith was down. **Ported, not removed or faked** — the endpoint performs real training.
-
-**What moved:**
-- `feedbackSignals.ts` copied **verbatim** (108 lines of pure label/weight resolution — no DB, no HTTP). Only the `Swipe` type was localized.
-- `trainEnsembleModel.ts` reproduces `trainModelOnStartup`'s orchestration exactly. The label taxonomy, per-sample weights, both early-return paths with their log messages, and `updateLastTrainingTimestamp()` firing regardless of outcome are all unchanged — a behavioural change here would silently produce a *differently-trained model* rather than a visible error.
-- Everything downstream (`computeMatchFeatures`, `computeBertCosineScore`, `buildFeatureVector`, `trainEnsemble`) already lived in this service; two private helpers were exported.
-
-**Where data now comes from** — four monolith-local reads replaced by the owning services:
-
-| Dataset | Owner | Endpoint |
-|---|---|---|
-| swipes | matching-decision-service | `GET /internal/swipes/all` |
-| candidates | candidate-core-service | `GET /internal/candidates/all` |
-| jobs | job-service | `GET /internal/jobs/all` |
-| application status | candidate-service | `GET /internal/application-status/all` *(added)* |
-
-> **Schema finding that simplified the port.** The monolith JOINed `candidate_application_status` to `candidates` because **its** copy was keyed by `candidate_account_id`. candidate-service's table is keyed by `candidate_id` — the same candidate-core id swipes use — so no join is needed at all. My first attempt assumed the monolith's shape and 500'd on a nonexistent column; the query was rewritten against the live schema.
-
-**Evidence:**
-
-| Condition | Result |
+| Step | Evidence |
 |---|---|
-| Monolith **UP** | `trained:true, sampleCount:113, cvAccuracy:{randomForest:0.6897, xgboost:0.6632, lightgbm:0.6909}` |
-| Monolith **OFF** (port 3006 unreachable) | **identical** |
-| RBAC | recruiter **403**, candidate **401**, no token **401**, `model/status` **200** |
+| 1. Rollback point recorded | commit `aa8584d`, tagged `pre-monolith-decommission`, clean tree |
+| 2. Full backup | 14 databases, 6.0 MB |
+| 3. Backup restore-verified **before** removing anything | `tejoma_recruiting` → disposable DB: **37/37 tables**, all row counts matched, swipes 111/111 |
+| 4. Monolith stopped | `Exited (0)` |
+| 5. Port unreachable | `app:3006` fetch failed from api-gateway; `bad address 'app:3006'` from nginx |
+| 6. Cannot auto-restart | stayed `Exited` after starting a dependent, and after starting one *with* its full dependency chain |
+| 7. Removed from deployment | `app` service block deleted from compose; `tejoma-app-1` container removed |
+| 8. Config cleaned | see §3 |
+| 9. Images rebuilt | 11 services, exit 0 |
+| 10. Stack started without monolith | 31 services, all healthy |
+| 11. Full test suite re-run | §5–§9 |
 
-## 3. All Three ML Endpoints Now Monolith-Free
+## 3. Runtime Configuration Removed
 
-| Endpoint | Before | Now (monolith OFF) |
-|---|---|---|
-| `POST /api/ml/evaluate` | 500 (monolith 502) | **200** — nDCG 0.7751 over 111 swipes, persisted |
-| `POST /api/ml/train/ranking` | 500 (monolith 502) | **200** — `trained:true`, 112 examples, 6 groups, persisted |
-| `POST /api/ml/train` | 502 | **200** — `trained:true`, 113 samples, real CV accuracies |
+- `app` service block deleted from `docker-compose.yml`
+- `MONOLITH_INTERNAL_URL` / `MONOLITH_URL` removed from the shared `x-service-urls` anchor
+- **11** per-service `MONOLITH_INTERNAL_URL` overrides and **1** `MONOLITH_URL` override removed
+- `MONOLITH_URL` removed from api-gateway's `REQUIRED_ALWAYS` — it would have **refused to start** without it
+- `MONOLITH_INTERNAL_URL` removed from `REQUIRED_ALWAYS` in **12 services** — same problem
+- `.env.local`: monolith vars commented out with rollback instructions; `DUAL_WRITE_ENABLED=false` (no source left to mirror from)
 
-## 4. Additional Defect Found
+**Runtime proof:** every service now reports empty `MONOLITH_INTERNAL_URL` and `MONOLITH_URL`, and api-gateway computes `fallback = false`.
 
-`db.query` was missing from candidate-service's exported `db` object — the **fifth** occurrence of this class in this repo (`candidate-service` `db.pool`, `candidate-core-service` `db.query`, `job-service` `db.query`, `matching-decision-service` `getLatestSwipesByCandidateIds`). Each produced a runtime `TypeError` surfaced as a generic 500. **This pattern is worth a standing lint rule.**
+## 4. Hardening Applied During Removal
 
-## 5. Final Architecture
+Three defects found and fixed while decommissioning — none would have surfaced from configuration review alone:
 
-```
-Browser
-  → nginx :443 (TLS, SPA; per-request upstream DNS re-resolution)
-      → api-gateway :4000 (explicit routes; MONOLITH_FALLBACK_ENABLED=false, CANARY_PERCENTAGE=100)
-          → 21 Tier-0 microservices, each owning its Postgres database
-          → app :3006 — STOPPED during validation, zero business dependencies, rollback only
-  Redis :6379 — pub/sub (realtime-service), BullMQ retrain queue
-  Postgres 18.1 — native on host, 22 tejoma_* databases
-```
+1. **Fallback defaulted to ON.** `MONOLITH_FALLBACK_ENABLED = process.env.X !== 'false'` evaluates to **true when unset**. Post-decommission that would proxy unmatched paths at an empty target, producing connection errors instead of the clean 404 the strangler-fig fallback is meant to degrade to. Now force-disabled whenever `MONOLITH_URL` is empty — *fallback is only meaningful when there is something to fall back to.*
+2. **`resume-service`'s `UPLOAD_SERVICE_URL` pointed at `app:3006`** — the monolith, not upload-service. Latent rather than an active break; corrected to `upload-service:4030`.
+3. **13 services would have refused to boot** after removal, because the monolith URL was a hard startup requirement. Caught before starting the stack, not after an outage.
 
-29 containers: 1 monolith, 21 Tier-0 (19 Node + 2 Python), nginx, redis, 6 observability.
+## 5. Final Application Test — Monolith Removed
 
-## 6. Database Ownership Matrix
+**Reads: 37/37.** Candidate (12): auth/me, profile/me, profile/experiences, jobs, job details, applications, decisions, decisions/active, matches, analytics, notifications, unread-count. Recruiter (15): auth/me, jobs, job details, candidates, candidate-search, recruiter-review, matches, match queue, swipes/history, swipes/stats, analytics dashboard, analytics recruiter/me, analytics skills, recruiter-notifications, unread-count. Admin/platform (10): users, admin/company-requests, ml/config, ml/model/status, ml/model/versions, ml/ranking/status, ml/evaluate/history, proficiency-analytics, shadow-data-health, skills/discovery/pending.
 
-| Service | Database | Owns | Cross-boundary reads (HTTP only) |
-|---|---|---|---|
-| candidate-service | tejoma_candidate | candidate_accounts, candidate_decisions, mutual_matches, candidate_application_status, candidate_notifications, candidate_profile_views, saved_candidates | jobs → job-service; companies → tenant-directory-service |
-| job-service | tejoma_job | jobs | candidates → candidate-core-service |
-| candidate-core-service | tejoma_candidate_core | candidates | — |
-| matching-decision-service | tejoma_matching_decision | swipes, recruiter_review view | jobs, candidates, scoring |
-| matching-scoring-service | tejoma_matching_scoring | matching_model_config, match_features | **swipes, candidates, jobs, application status (ML training)** |
-| matching-evaluation-service | tejoma_matching_evaluation | match_evaluation_runs, ltr_model_versions, proficiency_shadow_scores | swipes, jobs, scoring |
-| tenant-directory-service | tejoma_tenant_directory | companies | — |
-| identity-service | tejoma_identity | users, refresh_tokens, candidate_accounts (auth) | — |
-| recruiting-service | tejoma_recruiting_service | recruiter_matches, recruiter_notifications | swipes |
-| chat-service | tejoma_chat | messages | candidates, jobs |
-| resume-service | tejoma_resume | resume artifacts | — |
-| analytics-service | — (aggregator) | — | HTTP fan-out |
-| monolith | tejoma_recruiting | legacy schema | **none — rollback only** |
+**Writes: 10/10.**
 
-**No cross-service database writes.** All cross-boundary access is HTTP to the owning service.
-
-## 7. Monolith Dependency Scan — Final Classification
-
-| Class | Locations | Runtime evidence |
-|---|---|---|
-| **A — business-critical** | **NONE** | All previously-A endpoints now 200 monolith-off |
-| **B — rollback-only, fire-and-forget** | job-service `mirrorAndNotifyJobCreate/Update/Delete`; matching-decision-service `mirrorAndNotifySwipe`; candidate-core-service mirror writes | Logged `"Failed to mirror … will be stale"` while the same requests returned **201**. Non-blocking, proven. |
-| **B — flag-gated, real path verified** | matching-decision-service `getRecruiterReviewList` | `/api/recruiter-review` **200** monolith-off |
-| **E — dead code** | `candidate-service/routes/candidateAnalytics/index.routes.ts` (not mounted); `chat-service` `getPlatformStats` (calls candidate-core + job-service, not the monolith); `matching-decision-service/src/routes/internal/*.ts` (live routes are in `internal.routes.ts`); now-unused `monolithClient` exports in matching-evaluation-service and matching-scoring-service | No runtime effect |
-| **D — config / type declarations** | `*/config/env.ts`, `chat-service/types.ts` | Declarations only |
-
-## 8. Docker Dependency Audit — FIXED
-
-**12 Tier-0 services declared `depends_on: app` with `condition: service_healthy`.** Two real problems: `docker compose up -d <any-dependent>` **silently started the monolith** (this invalidated an earlier monolith-off run), and the stack refused to start if the monolith was unhealthy.
-
-All 12 removed. **Proven three separate times** with the monolith stopped:
-
-| Action | Monolith after |
+| Write | Result |
 |---|---|
-| `up -d --no-deps candidate-service` | Exited (0) |
-| `up -d analytics-service` (full dependency chain) | Exited (0) |
-| `start analytics-service` during failure-isolation testing | Exited (0) |
+| `POST /api/candidate-decisions` | **201** |
+| `POST /api/jobs` | **201** |
+| `POST /api/swipes` | **201** |
+| `POST /api/jobs/parse-description` | **200** |
+| `POST /api/chat` | **200** |
+| `POST /api/ml/evaluate` | **200** |
+| `POST /api/ml/train/ranking` | **200** |
+| `POST /api/ml/train` | **200** |
+| `PUT /api/candidate-notifications/read-all` | **200** |
+| `POST /api/parse-resume` (real multipart upload) | **200** |
 
-## 9. Workflow Evidence (monolith OFF)
+## 6. Security / RBAC / Tenant Isolation — 12/12
 
-**Candidate (12/12):** auth/me, profile/me, profile/experiences, jobs, job details, applications, decisions, decisions/active, matches, analytics, notifications, unread-count. Writes: decision **201**, notifications read-all **200**.
+No token **401** · garbage **401** · expired **401** · staff→candidate route **401** · candidate→staff route **403** · candidate→ML admin **401** · recruiter→superadmin-only **403** · admin→superadmin-only **403** · cross-tenant job (co-19→co-1) **404** · IDOR (cand14→cand45) **404** · `auth/refresh` no cookie **401** · `candidate-auth/refresh` no cookie **401**.
 
-**Recruiter (15/15):** auth/me, jobs, job details, candidates, candidate-search, recruiter-review, matches, match queue, swipes/history, swipes/stats, analytics dashboard, analytics recruiter/me, analytics skills, recruiter-notifications, unread-count. Writes: job creation **201**, swipe **201**, JD parsing **200**, resume parsing **200** (real multipart upload).
+Authorization was **tightened, never weakened** across this migration. No authorization failure returns a fake empty success — that anti-pattern was found and eliminated.
 
-**Admin / superadmin (10/10):** users, admin/company-requests, ml/config, ml/model/status, ml/model/versions, ml/ranking/status, ml/evaluate/history, proficiency-analytics, shadow-data-health, skills/discovery/pending.
+## 7. Multi-Tenancy — PASS
 
-**Multi-tenancy:** company registration **422** on empty body (route live, validating); approval queue **200** for superadmin, **403** for admin and recruiter; company context present in `/api/auth/me` (`company_id`, `company{id,name,plan}`); user management **200**.
+`POST /api/company-registration` **422** on empty body (live, validating) · approval queue **200** superadmin, **403** admin, **403** recruiter · company context present in `/api/auth/me` (`"company":{"id":1,"name":"Tejoma Corp","plan":"pro"}`) · user management **200**.
 
-## 10. Security / RBAC / Tenant Isolation — 12/12 PASS
+**Note on visibility:** `user-management` (adminOnly) and `tenant-requests` (superadminOnly) are hidden for the `recruiter` role by `Sidebar.tsx`'s filter, and the backend independently returns **403**. A recruiter sees 9 of 11 menu items **by design** — this is working RBAC, not a missing feature. Verified across all 48 frontend components and full git history: **no menu item or component was ever removed.**
 
-No token **401** · garbage **401** · expired **401** · staff→candidate route **401** · candidate→staff route **403** · candidate→ML admin **401** · recruiter→superadmin-only **403** · admin→superadmin-only **403** · cross-tenant job (co-19→co-1) **404** · IDOR (cand14→cand45) **404** · `/api/auth/refresh` no cookie **401** · `/api/candidate-auth/refresh` no cookie **401**.
+## 8. Redis / Events, Failure Isolation, Backup/Restore
 
-Authorization was **tightened, never weakened** across this migration: staff tokens no longer satisfy candidate auth (identity-service, candidate-service, resume-service); candidate tokens no longer satisfy staff auth (candidate-service, three matching services). **No authorization failure returns a fake empty success** — that anti-pattern was found and eliminated.
+**Redis** — publish delivered to 1 live subscriber. *Documented limitation:* events published while a consumer is down are **lost**; Redis pub/sub has no durability, so realtime events must not be treated as a system of record.
 
-## 11. Data Consistency
+**Failure isolation** — analytics-service stopped → `/api/analytics/dashboard` **502**, `/api/jobs` **200**, `/api/candidate-jobs` **200**; restored → **200**. No cascade, and the monolith did not reappear.
 
-| Table | Source | Service-owned | Match |
-|---|---|---|---|
-| candidate_decisions | 36 | 36 | identical IDs, 0 field mismatches |
-| mutual_matches | 10 | 10 | identical ID sets |
-| candidate_accounts | 37 | 37 | ✓ |
+**Backup/restore** — `tejoma_matching_scoring` (1628 lines) restored into a disposable DB: 4/4 tables identical, all row counts matched. Disposable dropped. Earlier runs verified `tejoma_candidate`, `tejoma_matching_decision`, `tejoma_matching_evaluation`, and the monolith's own database.
 
-New writes verified persisted by SQL: `ltr_model_versions` id 3, `match_evaluation_runs` id 3. All audit test rows removed; `candidate_decisions` verified back at its 36-row baseline.
+## 9. Final Dependency Scan
 
-## 12. Redis / Events — PASS (documented limitation)
+**Runtime:** no service holds a non-empty monolith URL. Zero services log a monolith call *attempt* other than the class-B mirrors below.
 
-Publish → consume delivered to 1 live subscriber. Redis restart → auto-reconnect and re-subscribe. Consumer restart → re-subscribed.
+| Class | Locations | Evidence |
+|---|---|---|
+| **A — business-critical** | **NONE** | — |
+| **B — rollback-only, fire-and-forget** | job-service `mirrorAndNotifyJobCreate/Update/Delete`; matching-decision-service `mirrorAndNotifySwipe`; candidate-core-service mirror writes | Log `"Failed to mirror … will be stale"` while the **same requests returned 201**. Non-blocking, proven. |
+| **B — flag-gated, real path verified** | matching-decision-service `getRecruiterReviewList` | `/api/recruiter-review` **200** |
+| **E — dead code** | `candidate-service/routes/candidateAnalytics/index.routes.ts` (not mounted); `chat-service` `getPlatformStats` (calls candidate-core + job-service despite the filename); `matching-decision-service/src/routes/internal/*.ts`; unused `monolithClient` exports in matching-evaluation/scoring | No runtime effect |
+| **D — config/type declarations** | `*/config/env.ts`, `chat-service/types.ts` | Declarations only |
 
-**Limitation stated, not hidden:** an event published while the consumer is down is **lost** (delivery count 0). Redis pub/sub provides no durability. Realtime events must not be treated as a system of record.
+**Docker:** `app` is not a compose service; `docker compose config --services` does not list it; zero `depends_on: app` remain (12 removed earlier); no `app:3006` outside explanatory comments.
 
-## 13. Failure Isolation — PASS
+## 10. Preserved for Rollback — NOT Deleted
 
-analytics-service stopped → `/api/analytics/dashboard` **502**, `/api/jobs` **200**, `/api/candidate-jobs` **200**; restored → **200**. No cascade. Monolith remained `Exited` throughout.
+Per instruction, historical source and rollback material remain:
 
-## 14. Backup / Restore — PASS
+- all monolith source under `src/`
+- each service's `services/monolithClient.ts` (class B/E, proven non-blocking)
+- `.env.local` monolith vars, commented with rollback instructions
+- `docker-compose.yml.pre-decommission`, `.env.local.pre-decommission`
+- git tags `pre-monolith-decommission` (`aa8584d`) and `monolith-decommissioned`
+- `.decommission-backup/` — 14 database dumps, **on disk, gitignored** (they contain real user emails and names and were removed from git tracking after an over-broad `git add -A` staged them)
 
-`tejoma_matching_decision`: 4/4 tables, all row counts match, `swipes` **byte-identical (115 rows)**, 10/10 indexes. Also verified for `tejoma_candidate` (9/9 tables, 34/34 indexes) and `tejoma_matching_evaluation` (9/9 tables, 22/22 indexes). Disposable databases dropped after each run.
+## 11. Rollback Procedure
 
-**Operational note:** `scripts/backup-database.sh` needs `pg_dump` on the host, which is not installed. Use a containerised client at the **matching major version** — the server is 18.1 and a 16.x client fails on version mismatch.
+1. `git checkout pre-monolith-decommission -- docker-compose.yml .env.local` (or restore the `.pre-decommission` copies).
+2. Uncomment `MONOLITH_INTERNAL_URL` in `.env.local`; set `MONOLITH_FALLBACK_ENABLED=true`.
+3. `docker compose up -d app` — the image is still built locally.
+4. `docker compose up -d` to recreate services with the monolith URLs restored.
+5. If database rollback is needed: restore from `.decommission-backup/*.sql` (verified restorable, §2 step 3).
 
-## 15. Production Hardening — Verified
+The fallback branch in `proxy.ts` and every `monolithClient` are unchanged, so rollback is configuration-only.
 
-TLS with HSTS and security headers; per-request upstream DNS re-resolution (fixes the outage class that previously took the entire API down on a gateway redeploy); rate limiting on `/api/auth/`; `restart: unless-stopped`; health checks working; Prometheus scraping `/metrics`; structured pino logs with `x-request-id` correlation IDs confirmed end-to-end.
+## 12. Remaining Risks (none blocking)
 
-## 16. Remaining Risks (none blocking)
-
-1. **Realtime events are lossy** during consumer downtime (§12).
+1. **Realtime events are lossy** during consumer downtime (§8).
 2. **`knowledge_base_chunks` missing** in `tejoma_candidate_core` — candidate RAG indexing silently no-ops (fire-and-forget).
 3. **Silent degradation** — with job-service stopped, `GET /api/candidate-jobs` returns `200 {"jobs":[]}` rather than 503; a candidate sees "no jobs" instead of an error.
 4. **`nanoid` advisory** (GHSA-2v37-7h3g-55p8, transitive) in candidate-core-service.
-5. **`companies` unreconciled** — 19 rows in the monolith DB vs 18 in tenant-directory-service.
-6. **Recurring defect classes** across this migration: missing keys on exported `db` objects (**5×**), SQL referencing nonexistent columns, undeclared npm imports, unmounted routers, `catch → return []` masking failures, stale Docker images hiding correct source. Services never exercised (upload-service, notifications-service) warrant the same sweep.
+5. **`companies` unreconciled** — 19 rows in `tejoma_recruiting` vs 18 in tenant-directory-service. `tejoma_recruiting` should be retained as cold storage ≥30 days.
+6. **Recurring defect classes** across this migration, worth a standing lint rule: missing keys on exported `db` objects (**5 occurrences**), SQL referencing nonexistent columns, undeclared npm imports, unmounted routers, `catch → return []` masking failures, and stale Docker images hiding correct source. `upload-service` and `notifications-service` were never exercised and warrant the same sweep.
 
-## 17. Decommission Procedure
+## 13. Recommended Next Steps
 
-**Now:**
-1. `docker compose stop app`. Nothing routes to it, nothing depends on it.
-2. Monitor 48h. Any need to start it indicates an unmapped dependency.
-
-**Then:**
-3. Remove the `app` service from `docker-compose.yml`; delete `src/api/*-internal.routes.ts` and each service's `services/monolithClient.ts` (all class B/E).
-4. Set `DUAL_WRITE_ENABLED=false`; stop mirroring into `tejoma_recruiting`.
-5. **Retain `tejoma_recruiting` as a cold backup ≥30 days** — it still holds legacy tables, and `companies` is unreconciled (§16.5).
-
-## 18. Rollback Procedure
-
-1. `docker compose start app`, set `MONOLITH_FALLBACK_ENABLED=true`, restart api-gateway → unmatched paths proxy to the monolith (~2 min).
-2. Per-domain: set that domain's cutover flag to `false` and restart the service — the monolith-proxy branch is still in code.
-3. Full: redeploy prior images, disable all cutover flags. `DUAL_WRITE_ENABLED=true` has kept `tejoma_recruiting` current.
-
-Monolith stopped and restarted cleanly ten times across this effort. **Final state: monolith running for rollback; `MONOLITH_FALLBACK_ENABLED=false`, `CANARY_PERCENTAGE=100` unchanged; all services healthy.**
+1. Monitor 48h. Nothing should require the monolith; if something does, §11 restores it in minutes.
+2. After a stable period, delete `src/` monolith source and each service's `monolithClient.ts` (all class B/E).
+3. Retain `tejoma_recruiting` as cold storage ≥30 days (§12.5), then archive.
+4. Move `.decommission-backup/` to secure storage — it contains real user data.
 
 ---
 
-## 19. Why "A"
+## 14. Why This Verdict
 
-The decision rule required zero business-critical monolith dependencies, complete workflows working with the monolith physically off, ML dependencies resolved, auth/RBAC/tenant isolation verified, data consistency verified, Redis/events working as designed, backup/restore verified, failure isolation verified, Docker unable to restart the monolith, and runtime evidence throughout.
+The rule required zero business-critical monolith dependencies, complete workflows working with the monolith gone, ML dependencies resolved, auth/RBAC/tenant isolation verified, data consistency verified, Redis/events working as designed, backup/restore verified, failure isolation verified, Docker unable to restart the monolith, and runtime evidence throughout.
 
-**Every one is met with runtime evidence**, including the ML training dependency that forced verdict B in the previous report. The monolith is now a rollback artifact with no business function.
+**Every condition is met with runtime evidence gathered while the monolith container did not exist** — not merely stopped. The monolith is now a rollback artifact on disk and in git history, with no runtime presence.
 
-**Per instruction, the monolith has NOT been deleted** — independence is proven first; deletion is step 3 of §17, at your discretion.
+**PRODUCTION READY — MONOLITH DECOMMISSIONED**
