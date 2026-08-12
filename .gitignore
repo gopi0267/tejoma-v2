@@ -52,3 +52,8 @@ terraform/crash.log
 # terraform/.terraform.lock.hcl is deliberately NOT ignored - it locks exact provider versions
 # for reproducibility and is meant to be committed, unlike the state/cache files above it.
 
+
+# Database dumps taken during the monolith decommission - contain real user data
+# (emails, names). Kept on disk for rollback, never committed.
+.decommission-backup/
+*.sql.gz
