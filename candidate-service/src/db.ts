@@ -527,14 +527,20 @@ export async function recordCandidateDecision(params: {
   jobId: number;
   action: number;
   decisionType: 'swipe_right' | 'swipe_left' | 'apply';
+  // Derived by the caller from the job being decided on. Required for the read path: job/company
+  // display fields are hydrated cross-service by company_id (this database has no jobs or
+  // companies table), so a row written without one comes back with job_title and company_name
+  // null. Before this was passed, newly recorded decisions rendered blank in the candidate's own
+  // history while backfilled rows showed correctly.
+  companyId: number | null;
 }): Promise<any | null> {
   try {
     const result = await pool.query(
       `INSERT INTO candidate_decisions
-       (candidate_account_id, job_id, action, decision_type, timestamp)
-       VALUES ($1, $2, $3, $4, NOW())
+       (candidate_account_id, job_id, company_id, action, decision_type, timestamp)
+       VALUES ($1, $2, $3, $4, $5, NOW())
        RETURNING *`,
-      [params.candidateAccountId, params.jobId, params.action, params.decisionType]
+      [params.candidateAccountId, params.jobId, params.companyId, params.action, params.decisionType]
     );
     return result.rows[0] || null;
   } catch (error) {

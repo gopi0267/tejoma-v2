@@ -18,6 +18,7 @@ import { requireCandidateAuth } from '../middleware/auth.middleware.js';
 import { db } from '../db.js';
 import { logger } from '../utils/logger.js';
 import { hydrateJobsForRows } from '../services/jobHydration.js';
+import { getAllOpenJobs } from '../services/jobServiceClient.js';
 import type { Request, Response } from 'express';
 
 const router = Router();
@@ -62,10 +63,20 @@ router.post('/candidate-decisions', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'You have already made this decision for this job' });
     }
 
+    // company_id is not in the request body and this database has no jobs table, so it is
+    // resolved from job-service - the same source the read path hydrates from. Persisting it at
+    // write time is what lets the decision render with a job title and company name afterwards.
+    const openJobs = await getAllOpenJobs();
+    const job = openJobs.find((j) => j.id === jobId);
+    if (!job) {
+      return res.status(404).json({ error: 'Job not found' });
+    }
+
     // Record the decision
     const decision = await db.recordCandidateDecision({
       candidateAccountId,
       jobId,
+      companyId: job.company_id ?? null,
       action,
       decisionType: decision_type as 'swipe_right' | 'swipe_left' | 'apply',
     });
