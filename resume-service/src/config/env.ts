@@ -44,7 +44,13 @@ export const JOB_ATTEMPTS = parseInt(process.env.JOB_ATTEMPTS || '3', 10);
 export const RESUME_STORAGE_DIR = process.env.RESUME_STORAGE_DIR || './uploads/resumes';
 export const TEMP_UPLOAD_DIR = process.env.TEMP_UPLOAD_DIR || './uploads/temp';
 
-const REQUIRED_ALWAYS = ['DB_HOST', 'DB_PORT', 'DB_NAME', 'DB_USER', 'MONOLITH_INTERNAL_URL', 'UPLOAD_SERVICE_URL', 'REDIS_URL'];
+
+// MONOLITH_INTERNAL_URL is no longer REQUIRED: the monolith was decommissioned 2026-08-12 and is
+// not part of the deployment. It stays an optional env var so the documented rollback (restore the
+// app service and set this) works without a code change. Every remaining monolithClient call in
+// this service is rollback-only fire-and-forget or dead code, verified non-blocking with the
+// monolith stopped - see TEJOMA_FINAL_MICROSERVICES_DECOMMISSION_REPORT.md.
+const REQUIRED_ALWAYS = ['DB_HOST', 'DB_PORT', 'DB_NAME', 'DB_USER', 'UPLOAD_SERVICE_URL', 'REDIS_URL'];
 const REQUIRED_PRODUCTION = ['IDENTITY_JWT_PUBLIC_KEY'];
 
 const fatal: string[] = [];

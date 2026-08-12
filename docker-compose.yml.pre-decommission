@@ -45,12 +45,8 @@ x-service-urls: &service-urls
   # unavailable" for exactly this reason.
   MATCHING_ML_SERVICE_URL: http://matching-ml-service:8009
   JD_NLP_SERVICE_URL: http://jd-nlp-service:8008
-  # MONOLITH_INTERNAL_URL / MONOLITH_URL removed with the monolith itself (decommissioned
-  # 2026-08-12). Any service still holding a monolithClient now resolves an empty base URL and
-  # fails fast rather than silently pointing at a host that no longer exists. Every such call
-  # site is class B (rollback-only fire-and-forget mirrors) or dead code - all verified
-  # non-blocking with runtime evidence before removal, see
-  # TEJOMA_FINAL_MICROSERVICES_DECOMMISSION_REPORT.md.
+  MONOLITH_INTERNAL_URL: http://app:3006
+  MONOLITH_URL: http://app:3006
 
 networks:
   internal:
@@ -66,6 +62,51 @@ services:
   # ============================================================================
   # APPLICATION SERVICES
   # ============================================================================
+
+  # ROLLBACK ONLY. No Tier 0 service declares `depends_on: app` any more (12 did, removed after
+  # the full migration completed). That mattered for two reasons:
+  #   1. `docker compose up -d <any-dependent>` silently STARTED the monolith, which invalidated a
+  #      monolith-off test run during the final audit before it was caught.
+  #   2. `condition: service_healthy` on the monolith meant the whole stack refused to start if the
+  #      monolith was unhealthy - the exact coupling this migration exists to remove.
+  # Nothing routes to it: MONOLITH_FALLBACK_ENABLED=false and no service holds a business
+  # dependency on it. Start it explicitly (`docker compose start app`) only to roll back.
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env.local
+    environment:
+      <<: *service-urls
+      # Overrides for container networking - everything else (DB_PASSWORD, JWT_SECRET,
+      # GEMINI_API_KEY, GMAIL_*, TWILIO_*) is inherited unchanged from .env.local above.
+      NODE_ENV: production
+      DB_HOST: host.docker.internal
+      JD_NLP_SERVICE_URL: http://jd-nlp-service:8008
+      MATCHING_ML_SERVICE_URL: http://matching-ml-service:8009
+      MATCHING_SCORING_SERVICE_URL: http://matching-scoring-service:4021
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+    extra_hosts:
+      # Docker Desktop (Windows/Mac) resolves this natively already; explicit for portability
+      # to a Linux server later, where it's needed.
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      jd-nlp-service:
+        condition: service_healthy
+      matching-ml-service:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - internal
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
   # Phase D Item 2: Realtime service - handles SSE subscriptions via Redis pub/sub.
   # Receives /stream requests and maintains SSE connections, forwarding Redis messages to clients.
@@ -295,6 +336,7 @@ services:
       NODE_ENV: production
       DB_HOST: host.docker.internal
       DB_NAME: tejoma_candidate
+      MONOLITH_INTERNAL_URL: http://app:3006
       IDENTITY_SERVICE_URL: http://identity-service:4001
       MATCHING_SCORING_SERVICE_URL: http://matching-scoring-service:4021
     extra_hosts:
@@ -329,6 +371,7 @@ services:
       NODE_ENV: production
       DB_HOST: host.docker.internal
       DB_NAME: tejoma_chat
+      MONOLITH_INTERNAL_URL: http://app:3006
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
@@ -355,11 +398,9 @@ services:
       <<: *service-urls
       NODE_ENV: production
       DB_HOST: host.docker.internal
+      MONOLITH_INTERNAL_URL: http://app:3006
       REDIS_URL: redis://redis:6379
-      # Was http://app:3006 - the monolith, not upload-service. Left pointing at the real
-      # upload-service now that the monolith is gone; resume-service's upload path was never
-      # exercised against it, so this was latent rather than an active break.
-      UPLOAD_SERVICE_URL: http://upload-service:4030
+      UPLOAD_SERVICE_URL: http://app:3006
     depends_on:
       redis:
         condition: service_healthy
@@ -384,6 +425,7 @@ services:
       NODE_ENV: production
       DB_HOST: host.docker.internal
       DB_NAME: tejoma_recruiting_service
+      MONOLITH_INTERNAL_URL: http://app:3006
       CANDIDATE_SERVICE_URL: http://candidate-service:4016
       JOB_SERVICE_URL: http://job-service:4018
       CANDIDATE_CORE_SERVICE_URL: http://candidate-core-service:4019
@@ -412,6 +454,7 @@ services:
     environment:
       <<: *service-urls
       NODE_ENV: production
+      MONOLITH_INTERNAL_URL: http://app:3006
       DB_HOST: host.docker.internal
       DB_PORT: "5432"
       DB_NAME: tejoma_analytics
@@ -442,6 +485,7 @@ services:
       NODE_ENV: production
       DB_HOST: host.docker.internal
       DB_NAME: tejoma_matching_evaluation
+      MONOLITH_INTERNAL_URL: http://app:3006
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
@@ -496,6 +540,7 @@ services:
       NODE_ENV: production
       DB_HOST: host.docker.internal
       DB_NAME: tejoma_matching_skill_discovery
+      MONOLITH_INTERNAL_URL: http://app:3006
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
@@ -631,6 +676,7 @@ services:
       NODE_ENV: production
       DB_HOST: host.docker.internal
       DB_NAME: tejoma_job
+      MONOLITH_INTERNAL_URL: http://app:3006
       CANDIDATE_CORE_SERVICE_URL: http://candidate-core-service:4019
       MATCHING_SCORING_SERVICE_URL: http://matching-scoring-service:4021
     extra_hosts:
@@ -665,6 +711,7 @@ services:
       NODE_ENV: production
       DB_HOST: host.docker.internal
       DB_NAME: tejoma_candidate_core
+      MONOLITH_INTERNAL_URL: http://app:3006
       MATCHING_DECISION_SERVICE_URL: http://matching-decision-service:4020
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -693,6 +740,7 @@ services:
       NODE_ENV: production
       DB_HOST: host.docker.internal
       DB_NAME: tejoma_matching_decision
+      MONOLITH_INTERNAL_URL: http://app:3006
       JOB_SERVICE_URL: http://job-service:4018
       CANDIDATE_CORE_SERVICE_URL: http://candidate-core-service:4019
       MATCHING_SCORING_SERVICE_URL: http://matching-scoring-service:4021
@@ -732,6 +780,7 @@ services:
       DB_HOST: host.docker.internal
       DB_NAME: tejoma_matching_scoring
       MATCHING_ML_SERVICE_URL: http://matching-ml-service:8009
+      MONOLITH_INTERNAL_URL: http://app:3006
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -785,6 +834,7 @@ services:
       CANDIDATE_CORE_SERVICE_URL: http://candidate-core-service:4019
       JOB_SERVICE_URL: http://job-service:4018
       MATCHING_DECISION_SERVICE_URL: http://matching-decision-service:4020
+      MONOLITH_URL: http://app:3006
     depends_on:
       identity-service:
         condition: service_healthy

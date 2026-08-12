@@ -96,7 +96,13 @@ export const CANDIDATE_CORE_SERVICE_URL = process.env.CANDIDATE_CORE_SERVICE_URL
 export const JOB_SERVICE_URL = process.env.JOB_SERVICE_URL || '';
 export const MATCHING_DECISION_SERVICE_URL = process.env.MATCHING_DECISION_SERVICE_URL || '';
 export const MONOLITH_URL = process.env.MONOLITH_URL || '';
-export const MONOLITH_FALLBACK_ENABLED = process.env.MONOLITH_FALLBACK_ENABLED !== 'false';
+// Defaults to true for backwards compatibility, but is force-disabled when MONOLITH_URL is empty.
+// Without that guard, unsetting MONOLITH_FALLBACK_ENABLED after the monolith's decommission would
+// make the gateway proxy unmatched paths to an empty target - producing connection errors instead
+// of the clean 404 the strangler-fig fallback is supposed to degrade to. Fallback is only
+// meaningful when there is something to fall back TO.
+export const MONOLITH_FALLBACK_ENABLED =
+  process.env.MONOLITH_FALLBACK_ENABLED !== 'false' && !!(process.env.MONOLITH_URL || '').trim();
 
 // Production canary: percentage of traffic routed through microservice-only path (0-100)
 // 100 = all traffic through microservices (full cutover)
@@ -108,7 +114,12 @@ if (isNaN(CANARY_PERCENTAGE) || CANARY_PERCENTAGE < 0 || CANARY_PERCENTAGE > 100
   process.exit(1);
 }
 
-const REQUIRED_ALWAYS = ['IDENTITY_SERVICE_URL', 'PLATFORM_GOVERNANCE_SERVICE_URL', 'JD_PARSER_SERVICE_URL', 'CANDIDATE_SERVICE_URL', 'CHAT_SERVICE_URL', 'RESUME_SERVICE_URL', 'RECRUITING_SERVICE_URL', 'ANALYTICS_SERVICE_URL', 'MATCHING_EVALUATION_SERVICE_URL', 'MATCHING_SKILL_DISCOVERY_SERVICE_URL', 'MATCHING_SCORING_SERVICE_URL', 'CANDIDATE_CORE_SERVICE_URL', 'JOB_SERVICE_URL', 'MATCHING_DECISION_SERVICE_URL', 'MONOLITH_URL'];
+const REQUIRED_ALWAYS = ['IDENTITY_SERVICE_URL', 'PLATFORM_GOVERNANCE_SERVICE_URL', 'JD_PARSER_SERVICE_URL', 'CANDIDATE_SERVICE_URL', 'CHAT_SERVICE_URL', 'RESUME_SERVICE_URL', 'RECRUITING_SERVICE_URL', 'ANALYTICS_SERVICE_URL', 'MATCHING_EVALUATION_SERVICE_URL', 'MATCHING_SKILL_DISCOVERY_SERVICE_URL', 'MATCHING_SCORING_SERVICE_URL', 'CANDIDATE_CORE_SERVICE_URL', 'JOB_SERVICE_URL', 'MATCHING_DECISION_SERVICE_URL'];
+// MONOLITH_URL deliberately NOT required: the monolith was decommissioned 2026-08-12 and is no
+// longer part of the deployment. It remains an optional env var purely so the documented rollback
+// (set MONOLITH_FALLBACK_ENABLED=true and restore the app service) still works without a code
+// change - the fallback branch in proxy.ts is unchanged. With the monolith gone, MONOLITH_URL
+// resolves to '' and MONOLITH_FALLBACK_ENABLED is false, so nothing can route there.
 
 const fatal: string[] = [];
 

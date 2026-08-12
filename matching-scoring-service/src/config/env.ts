@@ -48,7 +48,13 @@ export const CANDIDATE_SERVICE_URL = process.env.CANDIDATE_SERVICE_URL || '';
 export const JWT_SECRET = process.env.JWT_SECRET || 'dev-only-insecure-secret';
 export const MONOLITH_INTERNAL_URL = process.env.MONOLITH_INTERNAL_URL || '';
 
-const REQUIRED_ALWAYS = ['DB_HOST', 'DB_PORT', 'DB_NAME', 'DB_USER', 'MONOLITH_INTERNAL_URL'];
+
+// MONOLITH_INTERNAL_URL is no longer REQUIRED: the monolith was decommissioned 2026-08-12 and is
+// not part of the deployment. It stays an optional env var so the documented rollback (restore the
+// app service and set this) works without a code change. Every remaining monolithClient call in
+// this service is rollback-only fire-and-forget or dead code, verified non-blocking with the
+// monolith stopped - see TEJOMA_FINAL_MICROSERVICES_DECOMMISSION_REPORT.md.
+const REQUIRED_ALWAYS = ['DB_HOST', 'DB_PORT', 'DB_NAME', 'DB_USER'];
 
 const fatal: string[] = [];
 

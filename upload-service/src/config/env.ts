@@ -39,7 +39,13 @@ export const CLAMAV_ENABLED = process.env.CLAMAV_ENABLED === 'true';
 export const CLAMAV_HOST = process.env.CLAMAV_HOST || 'clamav';
 export const CLAMAV_PORT = parseInt(process.env.CLAMAV_PORT || '3310', 10);
 
-const REQUIRED_ALWAYS = ['DB_HOST', 'DB_PORT', 'DB_NAME', 'DB_USER', 'MONOLITH_INTERNAL_URL', 'RESUME_SERVICE_URL'];
+
+// MONOLITH_INTERNAL_URL is no longer REQUIRED: the monolith was decommissioned 2026-08-12 and is
+// not part of the deployment. It stays an optional env var so the documented rollback (restore the
+// app service and set this) works without a code change. Every remaining monolithClient call in
+// this service is rollback-only fire-and-forget or dead code, verified non-blocking with the
+// monolith stopped - see TEJOMA_FINAL_MICROSERVICES_DECOMMISSION_REPORT.md.
+const REQUIRED_ALWAYS = ['DB_HOST', 'DB_PORT', 'DB_NAME', 'DB_USER', 'RESUME_SERVICE_URL'];
 
 const fatal: string[] = [];
 

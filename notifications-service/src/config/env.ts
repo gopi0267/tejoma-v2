@@ -31,7 +31,13 @@ export const EMAIL_ENABLED = process.env.EMAIL_ENABLED === 'true';
 export const SMS_ENABLED = process.env.SMS_ENABLED === 'true';
 export const PUSH_ENABLED = process.env.PUSH_ENABLED === 'true';
 
-const REQUIRED_ALWAYS = ['DB_HOST', 'DB_PORT', 'DB_NAME', 'DB_USER', 'MONOLITH_INTERNAL_URL', 'REDIS_URL'];
+
+// MONOLITH_INTERNAL_URL is no longer REQUIRED: the monolith was decommissioned 2026-08-12 and is
+// not part of the deployment. It stays an optional env var so the documented rollback (restore the
+// app service and set this) works without a code change. Every remaining monolithClient call in
+// this service is rollback-only fire-and-forget or dead code, verified non-blocking with the
+// monolith stopped - see TEJOMA_FINAL_MICROSERVICES_DECOMMISSION_REPORT.md.
+const REQUIRED_ALWAYS = ['DB_HOST', 'DB_PORT', 'DB_NAME', 'DB_USER', 'REDIS_URL'];
 
 const fatal: string[] = [];
 
