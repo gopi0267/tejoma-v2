@@ -7,10 +7,23 @@
  */
 
 import { Router } from 'express';
-import { db } from '../db.js';
+import { db, mapRowToCandidate } from '../db.js';
 import { logger } from '../utils/logger.js';
 
 const router = Router();
+
+// candidates.skills is a comma-separated TEXT column, not JSON (verified against the live
+// schema). The routes below used JSON.parse on it, which threw
+// "Unexpected token 'N'" on the first real row and turned /candidates/for-job-scoring and
+// /candidates/all into unconditional 500s. This mirrors db.ts's own parseList convention, which
+// is what mapRowToCandidate already uses for the same column.
+function parseSkills(val: unknown): string[] {
+  if (Array.isArray(val)) return val as string[];
+  if (val === null || val === undefined) return [];
+  const str = String(val).trim();
+  if (str === '' || str.toLowerCase() === 'null') return [];
+  return str.split(',').map((s) => s.trim()).filter(Boolean);
+}
 
 /**
  * GET /internal/candidates/count?companyId=123
@@ -30,7 +43,7 @@ router.get('/candidates/count', async (req, res) => {
       `
       SELECT COUNT(*) as count
       FROM candidates
-      WHERE company_id = $1 AND deleted_at IS NULL
+      WHERE company_id = $1
       `,
       [companyId]
     );
@@ -66,31 +79,27 @@ router.get('/candidates/by-ids', async (req, res) => {
       return res.json({ candidates: [] });
     }
 
-    // Create parameterized query: $1, $2, $3... for each ID
-    const placeholders = ids.map((_, i) => `$${i + 1}`).join(',');
+    // Delegates to db.getCandidatesByIds rather than hand-rolling the SQL. The previous inline
+    // query selected first_name, last_name, experience_years and filtered on deleted_at - none of
+    // which exist on this table (the real columns are name, years_of_experience, and there is no
+    // soft-delete column), so it raised 'column "first_name" does not exist' and returned 500 on
+    // every call. It also ignored companyId entirely despite the endpoint accepting it, which
+    // would have leaked candidates across tenants had the query run at all.
+    //
+    // Live impact: matching-decision-service's getCandidateById is implemented as
+    // getCandidatesByIds([id]), so POST /api/swipes could never resolve a candidate and every
+    // recruiter swipe returned 404 'Job or Candidate not found'.
+    const companyId = Number(req.query.companyId);
+    if (!Number.isFinite(companyId)) {
+      return res.status(400).json({ error: 'companyId is required' });
+    }
 
-    const result = await db.query(
-      `
-      SELECT
-        id,
-        company_id,
-        email,
-        phone,
-        first_name,
-        last_name,
-        skills,
-        experience_years,
-        education,
-        created_at,
-        updated_at
-      FROM candidates
-      WHERE id IN (${placeholders}) AND deleted_at IS NULL
-      ORDER BY id
-      `,
-      ids
-    );
-
-    res.json({ candidates: result.rows });
+    // Mapped through mapRowToCandidate, the same converter /api/candidates uses, so consumers
+    // receive skills as a string[] rather than the raw comma-separated TEXT column. Returning raw
+    // rows here broke matching-decision-service's swipe path with
+    // 'candidate.skills?.join is not a function'.
+    const rows = await db.getCandidatesByIds(ids, companyId);
+    res.json({ candidates: rows.map(mapRowToCandidate) });
   } catch (error) {
     logger.error({ err: (error as Error).message }, 'Failed to get candidates by IDs');
     res.status(500).json({ error: 'Internal server error' });
@@ -118,15 +127,14 @@ router.get('/candidates/by-account-id', async (req, res) => {
         company_id,
         email,
         phone,
-        first_name,
-        last_name,
+        name,
         skills,
-        experience_years,
+        years_of_experience,
         education,
         created_at,
         updated_at
       FROM candidates
-      WHERE candidate_account_id = $1 AND deleted_at IS NULL
+      WHERE candidate_account_id = $1
       `,
       [candidateAccountId]
     );
@@ -173,16 +181,15 @@ router.get('/candidates/for-job-scoring', async (req, res) => {
         company_id,
         email,
         phone,
-        first_name,
-        last_name,
+        name,
         skills,
-        experience_years,
-        location,
+        years_of_experience,
+        current_location,
         resume_text,
         created_at,
         updated_at
       FROM candidates
-      WHERE company_id = $1 AND deleted_at IS NULL
+      WHERE company_id = $1
       ORDER BY created_at DESC
       LIMIT 500
       `,
@@ -193,11 +200,10 @@ router.get('/candidates/for-job-scoring', async (req, res) => {
     const candidates = result.rows.map((row) => ({
       id: row.id,
       email: row.email,
-      first_name: row.first_name,
-      last_name: row.last_name,
-      skills: Array.isArray(row.skills) ? row.skills : (row.skills ? JSON.parse(row.skills) : []),
-      experience_years: row.experience_years || 0,
-      location: row.location,
+      name: row.name,
+      skills: parseSkills(row.skills),
+      years_of_experience: row.years_of_experience || 0,
+      location: row.current_location,
     }));
 
     logger.debug(
@@ -224,7 +230,7 @@ router.get('/candidates/all', async (_req, res) => {
       SELECT
         id, company_id, name, email, skills, years_of_experience, current_location, resume_text
       FROM candidates
-      WHERE deleted_at IS NULL
+      
       ORDER BY created_at DESC
       `
     );
@@ -233,7 +239,7 @@ router.get('/candidates/all', async (_req, res) => {
       company_id: row.company_id,
       name: row.name,
       email: row.email,
-      skills: Array.isArray(row.skills) ? row.skills : (row.skills ? JSON.parse(row.skills) : []),
+      skills: parseSkills(row.skills),
       years_of_experience: row.years_of_experience || 0,
       current_location: row.current_location,
       resume_text: row.resume_text || '',
