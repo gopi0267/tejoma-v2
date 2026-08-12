@@ -320,6 +320,12 @@ export const db = {
   countCandidates,
   createCandidate,
   deleteCandidate,
+  // internal.routes.ts calls db.query(...) directly for a handful of ad-hoc reads
+  // (/internal/candidates/count, /internal/candidates/by-ids). db.query was never on this
+  // object - every one of those call sites threw "db.query is not a function", caught by the
+  // route handler and reported as a generic 500. Confirmed live: chat-service's
+  // getAllCandidates() calls /internal/candidates/by-ids and was failing the same way.
+  query: (text: string, params?: unknown[]) => pool.query(text, params),
 };
 
 export { pool };
