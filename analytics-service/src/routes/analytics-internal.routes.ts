@@ -5,54 +5,8 @@
 import { Router } from 'express';
 import { db } from '../db.js';
 import { logger } from '../utils/logger.js';
-import { MONOLITH_INTERNAL_URL } from '../config/env.js';
-import { getDashboard, getJobAnalytics, getRecruiterProfile, getSkills } from '../services/monolithClient.js';
 
 const router = Router();
-
-// Bootstrap endpoint to populate analytics from monolith (called on startup if needed)
-// REQUIRES: MONOLITH_INTERNAL_URL to be configured and accessible
-router.post('/bootstrap', async (req, res) => {
-  try {
-    if (!MONOLITH_INTERNAL_URL) {
-      return res.status(503).json({
-        error: 'Bootstrap requires MONOLITH_INTERNAL_URL configuration. Use mirror events from services instead.'
-      });
-    }
-
-    const companyIds = req.body.companyIds as number[] || [];
-    if (companyIds.length === 0) {
-      return res.status(400).json({ error: 'companyIds array required' });
-    }
-
-    let successCount = 0;
-    for (const companyId of companyIds) {
-      try {
-        const dashboardStats = await getDashboard(companyId);
-        if (dashboardStats) {
-          await db.upsertDashboardStats(companyId, {
-            totalReviewed: dashboardStats.total_reviewed,
-            matchesMade: dashboardStats.matches_made,
-            avgScore: dashboardStats.avg_score,
-            acceptanceRate: dashboardStats.acceptance_rate,
-            totalSwipesToday: dashboardStats.totalSwipesToday,
-            swipesYesterday: dashboardStats.swipesYesterday,
-            pendingCandidates: dashboardStats.pendingCandidates,
-            modelAccuracy: dashboardStats.modelAccuracy,
-          });
-          successCount++;
-        }
-      } catch (error) {
-        logger.warn({ err: error, companyId }, 'Failed to bootstrap analytics for company');
-      }
-    }
-
-    res.json({ success: true, bootstrappedCount: successCount, totalRequested: companyIds.length });
-  } catch (error: any) {
-    logger.error({ err: error.message }, 'Failed to bootstrap analytics');
-    res.status(500).json({ error: error.message });
-  }
-});
 
 router.post('/dashboard-cache', async (req, res) => {
   try {

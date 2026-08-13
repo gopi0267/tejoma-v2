@@ -3,14 +3,11 @@
  * fail-fast convention, minus any DB_* requirement: the Gateway is the one Tier 0 service with no
  * database of its own (Phase 3(database) section 1 - it owns no data, only routes to what does).
  *
- * All three upstream targets are required at startup, not graceful-null: unlike a soft enrichment
+ * All upstream targets are required at startup, not graceful-null: unlike a soft enrichment
  * call (tenantDirectoryClient.ts's getCompanyById), a Gateway that doesn't know where to send a
  * request has no reasonable request to serve at all. IDENTITY_SERVICE_URL and
  * PLATFORM_GOVERNANCE_SERVICE_URL route the paths already migrated to Tier 0 (Batches 4-11).
- * MONOLITH_URL is the strangler-fig fallback (Phase 11 section 12) - every path not explicitly
- * matched below falls through to it, which is how the frontend keeps working unchanged for
- * every route not yet migrated (recruiting, matching, jobs, candidates, analytics, and all static
- * frontend assets).
+ * The monolith fallback is removed; the gateway is 100% microservices.
  *
  * JD_PARSER_SERVICE_URL (Batch 15) and CANDIDATE_SERVICE_URL (Batch 16) are required for the same
  * reason: unlike Tenant Directory Service (cutover-by-configuration, never routed to directly),
@@ -95,19 +92,8 @@ export const MATCHING_SCORING_SERVICE_URL = process.env.MATCHING_SCORING_SERVICE
 export const CANDIDATE_CORE_SERVICE_URL = process.env.CANDIDATE_CORE_SERVICE_URL || '';
 export const JOB_SERVICE_URL = process.env.JOB_SERVICE_URL || '';
 export const MATCHING_DECISION_SERVICE_URL = process.env.MATCHING_DECISION_SERVICE_URL || '';
-export const MONOLITH_URL = process.env.MONOLITH_URL || '';
-// Defaults to true for backwards compatibility, but is force-disabled when MONOLITH_URL is empty.
-// Without that guard, unsetting MONOLITH_FALLBACK_ENABLED after the monolith's decommission would
-// make the gateway proxy unmatched paths to an empty target - producing connection errors instead
-// of the clean 404 the strangler-fig fallback is supposed to degrade to. Fallback is only
-// meaningful when there is something to fall back TO.
-export const MONOLITH_FALLBACK_ENABLED =
-  process.env.MONOLITH_FALLBACK_ENABLED !== 'false' && !!(process.env.MONOLITH_URL || '').trim();
 
-// Production canary: percentage of traffic routed through microservice-only path (0-100)
-// 100 = all traffic through microservices (full cutover)
-// 10 = 10% through microservices, 90% through fallback (early canary)
-// Default 100 for production once canary is verified
+// For future use (canary testing with other services or A/B routing)
 export const CANARY_PERCENTAGE = parseInt(process.env.CANARY_PERCENTAGE || '100', 10);
 if (isNaN(CANARY_PERCENTAGE) || CANARY_PERCENTAGE < 0 || CANARY_PERCENTAGE > 100) {
   console.error(`\nFATAL: CANARY_PERCENTAGE must be 0-100, got ${process.env.CANARY_PERCENTAGE}`);
@@ -115,11 +101,6 @@ if (isNaN(CANARY_PERCENTAGE) || CANARY_PERCENTAGE < 0 || CANARY_PERCENTAGE > 100
 }
 
 const REQUIRED_ALWAYS = ['IDENTITY_SERVICE_URL', 'PLATFORM_GOVERNANCE_SERVICE_URL', 'JD_PARSER_SERVICE_URL', 'CANDIDATE_SERVICE_URL', 'CHAT_SERVICE_URL', 'RESUME_SERVICE_URL', 'RECRUITING_SERVICE_URL', 'ANALYTICS_SERVICE_URL', 'MATCHING_EVALUATION_SERVICE_URL', 'MATCHING_SKILL_DISCOVERY_SERVICE_URL', 'MATCHING_SCORING_SERVICE_URL', 'CANDIDATE_CORE_SERVICE_URL', 'JOB_SERVICE_URL', 'MATCHING_DECISION_SERVICE_URL'];
-// MONOLITH_URL deliberately NOT required: the monolith was decommissioned 2026-08-12 and is no
-// longer part of the deployment. It remains an optional env var purely so the documented rollback
-// (set MONOLITH_FALLBACK_ENABLED=true and restore the app service) still works without a code
-// change - the fallback branch in proxy.ts is unchanged. With the monolith gone, MONOLITH_URL
-// resolves to '' and MONOLITH_FALLBACK_ENABLED is false, so nothing can route there.
 
 const fatal: string[] = [];
 

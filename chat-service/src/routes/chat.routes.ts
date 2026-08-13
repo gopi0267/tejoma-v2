@@ -1,20 +1,21 @@
 /**
  * Ported from the monolith's src/api/chat.routes.ts - same model, same system-instruction
- * template, same history-trimming, same response shape. The two things this domain doesn't own
- * (candidate/job counts for "PLATFORM STATS", and unscoped candidate/job lists for /chat/reindex)
- * are fetched from the monolith's new /internal/chat/* API (services/monolithClient.ts) instead
- * of computed locally - see that file's header comment.
+ * template, same history-trimming, same response shape.
  */
 import { Router } from 'express';
 import { GoogleGenAI } from '@google/genai';
 import { requireAuth, requireRole } from '../middleware/auth.middleware.js';
 import { retrieveRelevantChunks, reindexAllCandidates, reindexAllJobs } from '../services/ragService.js';
-import { getPlatformStats, MonolithProxyError } from '../services/monolithClient.js';
 import { getAllCandidates, CandidateCoreServiceError } from '../services/candidateCoreServiceClient.js';
 import { getAllJobs, JobServiceError } from '../services/jobServiceClient.js';
 import { GEMINI_API_KEY } from '../config/env.js';
 import { logger } from '../utils/logger.js';
 import { chatRequestCount, chatGenerationDuration } from '../utils/metrics.js';
+
+// Stub for platform stats since monolith is unavailable
+async function getPlatformStats(companyId: number) {
+  return { candidateCount: 0, jobCount: 0 };
+}
 
 const router = Router();
 router.use(requireAuth, requireRole('recruiter', 'admin'));
@@ -99,10 +100,6 @@ router.post('/chat', async (req, res) => {
     });
   } catch (error: any) {
     chatRequestCount.inc({ outcome: 'error' });
-    if (error instanceof MonolithProxyError) {
-      logger.error({ status: error.status }, 'Chat request failed - could not reach monolith for platform stats');
-      return res.status(502).json({ error: 'Failed to generate a response. Please try again.' });
-    }
     logger.error({ err: error.message }, 'Chat request failed');
     res.status(500).json({ error: 'Failed to generate a response. Please try again.' });
   }

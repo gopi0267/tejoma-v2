@@ -3,11 +3,6 @@ global:
   evaluation_interval: 15s
 
 scrape_configs:
-  - job_name: 'tejoma-app'
-    static_configs:
-      - targets: ['app:3006']
-    metrics_path: /api/metrics
-
   # Every Tier 0 microservice built this migration exposes real Prometheus metrics
   # (src/utils/metrics.ts, prom-client) at the default /metrics path - none were ever added as a
   # scrape target before, so this instrumentation existed but nothing collected it. One job per
