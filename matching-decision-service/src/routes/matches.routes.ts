@@ -31,13 +31,22 @@ router.get('/matches/queue/:job_id', async (req, res) => {
     const job_id = parseInt(req.params.job_id, 10);
     if (Number.isNaN(job_id)) return res.status(400).json({ error: 'Invalid Job ID parameter' });
 
-    const job = await jobServiceClient.getJobById(job_id, companyId);
+    // Fetched concurrently: the job lookup is a cross-service HTTP call to job-service and the
+    // shortlist read is a local query against this service's own swipes mirror. Neither depends on
+    // the other, so awaiting them in sequence added a full job-service round trip to every request
+    // for no reason. Measured p95 for this endpoint was the slowest on the whole surface (904ms).
+    // Same Promise.all pattern this file already uses for the swipe handlers below. No change to
+    // what is fetched, to the shortlist semantics, or to scoring.
+    //
+    // The 404 is still evaluated before anything is done with the shortlist, so an unknown or
+    // cross-tenant job_id behaves exactly as before.
+    const [job, shortlistedIds] = await Promise.all([
+      jobServiceClient.getJobById(job_id, companyId),
+      // Shortlist-only queue: only candidates whose latest decision for this job is still
+      // "Saved" (action=0.5) - i.e. not yet finalized to Accepted/Rejected.
+      db.getShortlistedCandidateIds(job_id, companyId),
+    ]);
     if (!job) return res.status(404).json({ error: 'Job not found' });
-
-    // Shortlist-only queue: only candidates whose latest decision for this job is still
-    // "Saved" (action=0.5) - i.e. not yet finalized to Accepted/Rejected. Purely local (own
-    // swipes mirror), no cross-service call needed.
-    const shortlistedIds = await db.getShortlistedCandidateIds(job_id, companyId);
     const queueCandidates = await candidateCoreServiceClient.getCandidatesByIds([...shortlistedIds], companyId);
 
     if (queueCandidates.length === 0) {
