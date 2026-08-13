@@ -67,6 +67,39 @@ services:
   # APPLICATION SERVICES
   # ============================================================================
 
+  # Scheduled database backups. Runs scripts/backup-database.sh on a loop - the same script that
+  # is verified by hand, not a second implementation that could drift from it.
+  #
+  # Needs the Docker socket because the backup script shells out to a containerised pg_dump
+  # (Postgres runs natively on the host, so there is no pg_dump in any service image). The socket
+  # is mounted READ-ONLY; the container still effectively has host-level Docker access, so treat it
+  # as privileged and do not add anything else to it. In AWS this service is replaced by RDS
+  # automated backups/snapshots - see TEJOMA_FINAL_PRODUCTION_OPERATIONS_REPORT.md.
+  #
+  # Credentials come from .env.local like every other service; nothing is baked into the image.
+  db-backup:
+    image: docker:27-cli
+    env_file:
+      - .env.local
+    environment:
+      BACKUP_INTERVAL_SECONDS: "${BACKUP_INTERVAL_SECONDS:-86400}"
+      BACKUP_RETENTION_DAYS: "${BACKUP_RETENTION_DAYS:-30}"
+      BACKUP_DIR: /backups
+      DOCKER_NETWORK: tejoma_internal
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./scripts:/app/scripts:ro
+      - ./.backups:/backups
+    entrypoint: ["sh", "/app/scripts/backup-cron.sh"]
+    restart: unless-stopped
+    networks:
+      - internal
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
   # Phase D Item 2: Realtime service - handles SSE subscriptions via Redis pub/sub.
   # Receives /stream requests and maintains SSE connections, forwarding Redis messages to clients.
   # This removes SSE endpoint responsibility from the monolith.

@@ -18,6 +18,15 @@ DB_PORT="${DB_PORT:-5432}"
 DB_USER="${DB_USER:-postgres}"
 DB_PASSWORD="${DB_PASSWORD:-}"
 
+# Postgres runs natively on the host (not containerised - see DEPLOYMENT.md), so a containerised
+# pg_dump must address it as host.docker.internal. A real hostname (e.g. an RDS endpoint) is used
+# unchanged, which is what makes this work in production too.
+case "${DB_HOST}" in
+  localhost|127.0.0.1|::1) RESOLVED_DB_HOST="host.docker.internal" ;;
+  *)                       RESOLVED_DB_HOST="${DB_HOST}" ;;
+esac
+DOCKER_NETWORK="${DOCKER_NETWORK:-tejoma_internal}"
+
 echo "Using DB_HOST=${DB_HOST}, DB_USER=${DB_USER}, DB_PORT=${DB_PORT}"
 
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
@@ -33,7 +42,16 @@ DATABASES=(
   "tejoma_career_intelligence" "tejoma_dynamic_weighting"
   "tejoma_job" "tejoma_candidate_core" "tejoma_matching_decision"
   "tejoma_matching_scoring"
+  # Added 2026-08-13: these three exist and hold real service-owned data but were missing from
+  # this list, so they were never backed up. tejoma_resume in particular holds candidate resume
+  # file metadata (resume_service.candidate_resume_files) - losing it orphans every stored resume
+  # on disk. Verified against the live server: this list now matches all 22 tejoma_* databases.
+  "tejoma_resume" "tejoma_notifications" "tejoma_uploads"
 )
+
+# tejoma_recruiting is the decommissioned monolith's database. It is deliberately still backed up:
+# it remains cold storage for rollback and holds legacy tables not migrated anywhere. Drop it from
+# this list only after the retention window in the decommission report has passed.
 
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -65,10 +83,16 @@ for db in "${DATABASES[@]}"; do
   export PGPASSWORD="${DB_PASSWORD}"
 
   # Run pg_dump
+  # DB_HOST is "localhost" in .env.local - correct for a process on the host, wrong inside this
+  # throwaway container where localhost is the container itself. Every dump failed with
+  # "connection to server at localhost ... Connection refused", so this script had NEVER
+  # produced a usable backup. --add-host maps host.docker.internal to the host gateway.
   docker run --rm \
+    --network "${DOCKER_NETWORK}" \
+    --add-host=host.docker.internal:host-gateway \
     -e PGPASSWORD="${DB_PASSWORD}" \
     postgres:18-alpine \
-    pg_dump -h "${DB_HOST}" -p "${DB_PORT}" -U "${DB_USER}" -d "${db}" \
+    pg_dump -h "${RESOLVED_DB_HOST}" -p "${DB_PORT}" -U "${DB_USER}" -d "${db}" \
     > "${temp_file}" 2>&1
 
   dump_result=$?
@@ -78,14 +102,19 @@ for db in "${DATABASES[@]}"; do
     mv "${temp_file}.gz" "${backup_file}"
     size=$(du -h "${backup_file}" | cut -f1)
     echo -e "${GREEN}[$(date '+%Y-%m-%d %H:%M:%S')] ✓ ${db} (${size})${NC}" | tee -a "${LOG_FILE}"
-    ((BACKUP_COUNT++))
+    # NOT ((BACKUP_COUNT++)): that arithmetic expression evaluates to the PRE-increment value, so
+    # on the very first success (0 -> 1) it returns 0, which bash reports as exit status 1, and
+    # `set -euo pipefail` at the top of this script then aborts the whole run. Observed exactly
+    # that: the first database backed up successfully and the script exited before touching the
+    # other 21. Explicit assignment always returns 0.
+    BACKUP_COUNT=$((BACKUP_COUNT + 1))
   else
     echo -e "${RED}[$(date '+%Y-%m-%d %H:%M:%S')] ✗ ${db} - Failed${NC}" | tee -a "${LOG_FILE}"
     if [ -f "${temp_file}" ]; then
       echo "Error output:" | tee -a "${LOG_FILE}"
       head -10 "${temp_file}" | tee -a "${LOG_FILE}"
     fi
-    ((BACKUP_FAILED++))
+    BACKUP_FAILED=$((BACKUP_FAILED + 1))
     rm -f "${temp_file}" 2>/dev/null || true
   fi
 done
@@ -104,7 +133,10 @@ done
 VALID=0
 for f in "${BACKUP_RUN_DIR}"/*.sql.gz; do
   if [ -f "$f" ] && gzip -t "$f" 2>/dev/null; then
-    ((VALID++))
+    # Same pre-increment/set -e trap as BACKUP_COUNT above - this one aborted the run during
+    # integrity verification, before "Valid backups" was ever printed and before retention
+    # cleanup ran.
+    VALID=$((VALID + 1))
   fi
 done
 echo "Valid backups: ${VALID}" | tee -a "${LOG_FILE}"

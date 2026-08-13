@@ -7,6 +7,9 @@ coverage/
 .env*
 !.env.example
 backups/
+# Default output of scripts/backup-database.sh. Database dumps must never be committed -
+# they contain real user data and credentials.
+.backups/
 .venv/
 uploads/*
 !uploads/.gitkeep
