@@ -50,7 +50,12 @@ export const TEMP_UPLOAD_DIR = process.env.TEMP_UPLOAD_DIR || './uploads/temp';
 // app service and set this) works without a code change. Every remaining monolithClient call in
 // this service is rollback-only fire-and-forget or dead code, verified non-blocking with the
 // monolith stopped - see TEJOMA_FINAL_MICROSERVICES_DECOMMISSION_REPORT.md.
-const REQUIRED_ALWAYS = ['DB_HOST', 'DB_PORT', 'DB_NAME', 'DB_USER', 'UPLOAD_SERVICE_URL', 'REDIS_URL'];
+// UPLOAD_SERVICE_URL is NOT required. upload-service is unused scaffolding - it is not a compose
+// service, has no Gateway route, no frontend caller, its feature flag is false, and its `uploads`
+// table is empty. resume-service exports the constant but never calls it; the live upload path is
+// resume-service's own candidateResume/staffResume routes. Requiring it here made this service
+// refuse to start on a variable pointing at something that does not run.
+const REQUIRED_ALWAYS = ['DB_HOST', 'DB_PORT', 'DB_NAME', 'DB_USER', 'REDIS_URL'];
 const REQUIRED_PRODUCTION = ['IDENTITY_JWT_PUBLIC_KEY'];
 
 const fatal: string[] = [];
