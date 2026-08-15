@@ -17,6 +17,9 @@ import { registry, metricsMiddleware } from './utils/metrics.js';
 import { requestIdMiddleware } from './middleware/requestId.middleware.js';
 import healthRoutes from './routes/health.routes.js';
 import jdParserRoutes from './routes/jdParser.routes.js';
+import jdUnderstandingRoutes from './routes/jdUnderstanding.routes.js';
+import candidateUnderstandingRoutes from './routes/candidateUnderstanding.routes.js';
+import knowledgeGraphRoutes from './routes/knowledgeGraph.routes.js';
 import { IS_PRODUCTION } from './config/env.js';
 
 const app = express();
@@ -53,6 +56,15 @@ app.use(metricsMiddleware);
 
 app.use('/', healthRoutes);
 app.use('/api', jdParserRoutes);
+// Phase 3. Mounted alongside the parser, not in front of it: the existing extraction contract is
+// untouched, so a fault in the understanding engine cannot degrade JD parsing.
+app.use('/api', jdUnderstandingRoutes);
+// Phase 4. Stateless like the JD engine: it takes a candidate record as an argument and never
+// queries for one, so it cannot widen any caller's access to candidate data.
+app.use('/api', candidateUnderstandingRoutes);
+// Phase 5. Read-only query surface over a graph built at module load from curated sources; there
+// is no mutation endpoint, so no request can alter shared knowledge.
+app.use('/api', knowledgeGraphRoutes);
 
 app.get('/metrics', async (_req, res) => {
   res.set('Content-Type', registry.contentType);
