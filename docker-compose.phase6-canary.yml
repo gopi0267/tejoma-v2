@@ -1,0 +1,26 @@
+# Phase 6 canary overlay.
+#
+# Adds ONE extra jd-parser instance running the Phase 6 image, alongside the unchanged production
+# instance. It is deliberately a DIFFERENT service name: nginx and api-gateway resolve the upstream
+# by the DNS name `jd-parser-service`, so `jd-parser-canary` receives no production traffic and can
+# only be reached by an explicit in-network request. That is the smallest canary this architecture
+# supports - a real deployed instance, zero blast radius.
+#
+# Teardown: docker compose -f docker-compose.yml -f docker-compose.phase6-canary.yml rm -sf jd-parser-canary
+services:
+  jd-parser-canary:
+    image: tejoma-jd-parser-service:phase6
+    env_file:
+      - .env.local
+    environment:
+      NODE_ENV: production
+      JD_NLP_SERVICE_URL: http://jd-nlp-service:8008
+    restart: "no"
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4004/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

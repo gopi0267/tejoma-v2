@@ -20,6 +20,8 @@ import jdParserRoutes from './routes/jdParser.routes.js';
 import jdUnderstandingRoutes from './routes/jdUnderstanding.routes.js';
 import candidateUnderstandingRoutes from './routes/candidateUnderstanding.routes.js';
 import knowledgeGraphRoutes from './routes/knowledgeGraph.routes.js';
+import evidenceRoutes from './routes/evidence.routes.js';
+import matchIntelligenceRoutes from './routes/matchIntelligence.routes.js';
 import { IS_PRODUCTION } from './config/env.js';
 
 const app = express();
@@ -65,6 +67,14 @@ app.use('/api', candidateUnderstandingRoutes);
 // Phase 5. Read-only query surface over a graph built at module load from curated sources; there
 // is no mutation endpoint, so no request can alter shared knowledge.
 app.use('/api', knowledgeGraphRoutes);
+// Phase 6. Stateless like Phases 3-5: it evaluates the job and candidate profiles the caller
+// supplies and queries nothing. It is on no matching path and returns no score, so it can neither
+// change production ranking nor be mistaken for a ranking signal.
+app.use('/api', evidenceRoutes);
+// Phase 7. Shadow-only semantic matching: it reasons over the Phase 3-6 profiles the caller supplies
+// and returns a decomposed Match Intelligence Profile. It reads no production score and writes
+// nothing, so matching-scoring-service remains the sole authority for ranking.
+app.use('/api', matchIntelligenceRoutes);
 
 app.get('/metrics', async (_req, res) => {
   res.set('Content-Type', registry.contentType);
